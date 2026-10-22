@@ -31,6 +31,12 @@ class FieldTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             host.preview_permitted([{'dev': 'wwan0', 'table': 52}], False)
 
+    def test_route_check_includes_ipv6_and_fails_closed(self):
+        with patch.object(host, 'run', side_effect=[(0, '[]'), (0, '[{"dev":"wwan0","dst":"::/0"}]')]):
+            self.assertTrue(host.metered_possible(host.routes()))
+        with patch.object(host, 'run', side_effect=[(0, '[]'), (1, '')]):
+            with self.assertRaises(ValueError): host.routes()
+
     def test_wifi_preview_no_cellular_route(self):
         host.preview_permitted([{'dev': 'wlan1'}, {'dev': 'tailscale0'}], False)
 

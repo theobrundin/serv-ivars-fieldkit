@@ -149,7 +149,7 @@ rollback. Keep Tailscale access and local recovery available during installation
   the production location had zero customers. No production test visit was sent.
 - Architecture: 75 passes. Stream: 331 passes. AWS Python: 39 passes. Pipeline:
   106 passes and the four documented baseline failures. These do not constitute
-  a clean/no-bugs certification. New field tools: 19 tests pass. The retained
+  a clean/no-bugs certification. New field tools: 20 tests pass. The retained
   bench-viewer suite has 15 passing tests. The new image-control reader was also
   exercised on the actual C113 (all four sliders read 50). The preview refusal
   path was tested without permitting or transferring camera video over cellular.

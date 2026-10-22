@@ -44,7 +44,13 @@ def private_json(path):
 
 
 def routes():
-    return json.loads(run(['ip', '-j', '-4', 'route', 'show', 'table', 'all'])[1])
+    result = []
+    for family in ('-4', '-6'):
+        code, output = run(['ip', '-j', family, 'route', 'show', 'table', 'all'])
+        if code:
+            raise ValueError('Cannot verify all route families; preview remains disabled')
+        result.extend(json.loads(output))
+    return result
 
 
 def metered_possible(route_list):
