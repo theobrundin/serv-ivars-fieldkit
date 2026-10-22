@@ -827,6 +827,20 @@ cellular route unless the operator explicitly permits it for that session.
 No field raw-text detection page is installed. Normalization, hashing and
 MMC's descriptive-only role are unchanged.
 
+The shared hours parser also accepts `hours.weekly`: all seven lowercase
+`mon`–`sun` entries, each an `open`/`close` object or `null` for a closed day.
+It cannot be mixed with daily `hours.open`/`hours.close`. A window belongs to
+its opening day, including an overnight close; capture warmup can begin on the
+previous day. Equal opening/closing times mean 24 hours from that opening.
+The location's IANA time zone selects the weekday and follows daylight saving.
+Existing daily configurations retain their behaviour. Lakewood's reviewed
+schedule is 11:00–21:00 Sunday–Thursday and 11:00–22:00 Friday/Saturday,
+America/Los_Angeles, with 15-minute capture warmup. The adoption installer
+allows only this shared `config.py` migration from the previously verified
+bench file digest, backs it up, validates profiles using the approved parser,
+and requires every other installed app module to match exactly. This remains
+a human-approved host install; editing the repository does not change the Pi.
+
 - Stream v1.64 reports that it loads detection zones from the web, but the
   28 Aug audit did not prove that a correctly sized camera-1 mask was active.
   Treat the whole frame as analyzed until the actual mask is inspected after a

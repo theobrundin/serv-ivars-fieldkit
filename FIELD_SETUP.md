@@ -69,6 +69,12 @@ restaurant `Ivar's` and location number `001`. Both new device keys are unique.
 Secrets stay in private files and never belong in Git, command arguments or a
 handoff chat. Existing LJS/Qdoba identities are untouched.
 
+Location 001 is **Lakewood Seafood Bar**, 10114 S Tacoma Way, Tacoma, WA 98499,
+(253) 588-4773. The user supplied these hours: Sunday–Thursday 11am–9pm;
+Friday/Saturday 11am–10pm, in `America/Los_Angeles`. Capture warms up at
+10:45am; counting starts at 11am. The public site settings are in
+`fieldkit/sites/ivars-001.json`; credentials are separate.
+
 On Pi: `/home/serv/ivars-staging` contains private commissioning inputs and
 reports. After installation: `/etc/serv-field/profiles/{sandbox,production}.json`
 are root-private. The running application keeps its standard private config
@@ -78,13 +84,16 @@ Ivar's. No bench queue is copied into the production queue.
 
 ## Commissioning sequence
 
-1. Confirm the restaurant's opening/closing times and IANA time zone. This
-   version supports one daily window, including an overnight window, with
-   15-minute capture warmup. Different weekday schedules require an extension
-   before activation. Never use a guessed schedule as production configuration.
+1. Confirm the restaurant's opening/closing times and IANA time zone. Lakewood's
+   schedule is now supplied above. The shared parser supports complete weekly
+   schedules, overnight windows, closed days and 15-minute capture warmup.
+   Existing daily configurations retain their behaviour.
 2. Prepare the production profile with `fieldkit.prepare_profiles` on the Pi,
-   supplying the private production identity, time zone and confirmed hours.
-   It validates through the actual application parser and changes no service.
+   supplying the private production identity and
+   `--site-file fieldkit/sites/ivars-001.json`. Run from the reviewed release
+   checkout so validation uses the proposed weekday-aware parser. The installed
+   bench parser remains unchanged until the approved install. Preparing profiles
+   changes no service.
 3. Set the same time zone for `ivars-001` in the existing AWS
    `LOCATION_TIMEZONES` environment mapping for AggregateVisits,
    AggregateDetectionEvents and Analytics, preserving other mappings and
@@ -98,7 +107,7 @@ Ivar's. No bench queue is copied into the production queue.
    sharing hotspot command. Recheck RTSP after pairing and a camera power cycle.
 5. Review and install one exact commit using the human-run command below.
    This is a host install, not a Python-only fleet update. It leaves the app in
-   sandbox mode, installs the IP-camera hours timer, preserves cellular session
+   sandbox mode, installs the shared weekday-hours parser and IP-camera hours timer, preserves cellular session
    ownership, tightens root-owned code permissions, enables key-only Tailscale administration, permits local camera
    DHCP, and removes the temporary raw-text viewer from the Stream webhook list.
 6. At the actual mounting position, label real vehicle passes in daylight and
@@ -129,7 +138,9 @@ sudo /usr/bin/python3 -I /home/serv/ivars-release/fieldkit/install.py \
 
 The checkout must exactly match the approved commit. Do not substitute a branch
 name. The installer rejects a different Pi, an already-adopted host, drifted
-application code, or a different cellular supervisor. This is deliberately not
+application code, or a different cellular supervisor. The only allowed app
+migration is `config.py` from the verified bench digest to the reviewed weekly
+scheduler; every other application module must match. This is deliberately not
 a generic new-Pi imaging tool. A versioned private pre-install backup is kept
 under `/var/backups/serv-ivars-*`; it is a recovery input, not a tested automatic
 rollback. Keep Tailscale access and local recovery available during installation.
@@ -163,8 +174,20 @@ rollback. Keep Tailscale access and local recovery available during installation
   control implementations could not raise its bitrate. A prior distant CDU
   plate occupied only 86 pixels of width, so 15-metre readability is unresolved.
 
-Still unverified: reviewed host installation, production activation, confirmed
-restaurant hours/time zone, secured-camera re-pair, real onsite day/night
+The Lakewood schedule update adds 9 tests (29 field-tool tests now pass),
+including every minute of a complete week, UTC/local weekday boundaries,
+daylight saving, overnight windows, warmup across midnight and refusal of an
+unrecognized app migration. Architecture (75), Stream (331) and AWS (39)
+remain passing; the pipeline retains exactly the same four baseline failures.
+AWS Device metadata now contains the supplied site address, phone and hours.
+All three live Lambda environment mappings read back `America/Los_Angeles`
+for `ivars-001`. Evaluating the previously verified shared cloud helper with
+those live mappings gives the correct summer/winter local day/hour and the
+25-hour November DST day. This is configuration verification, not a real
+production Visit/aggregation test. The Pi's installed scheduler has not changed.
+
+Still unverified: reviewed host installation, production activation,
+secured-camera re-pair, real onsite day/night
 accuracy and traffic geometry, cloud local-day buckets, whole-unit cold boot
 after conversion, and cellular/Wi-Fi failover with a second adapter.
 

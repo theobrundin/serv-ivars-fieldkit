@@ -20,6 +20,7 @@ BOOTSTRAP_LOG_PATH = Path("/var/log/serv/bootstrap.log")
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 DEVICE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{2,63}$")
 LOCATION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{2,63}$")
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 class ConfigError(Exception):
@@ -146,18 +147,43 @@ class Hours:
     open_minutes: int = 0
     close_minutes: int = 0
     warmup_minutes: int = 15
+    # Complete weekly schedule, indexed by the day a window OPENS. None is
+    # closed. Empty preserves the legacy daily open/close behaviour exactly.
+    weekly: dict[str, tuple[int, int] | None] = field(default_factory=dict)
 
-    def _local_minutes(self, when: datetime | None) -> int:
+    def _local_time(self, when: datetime | None) -> datetime:
         now = when or datetime.now(ZoneInfo(self.timezone))
         if now.tzinfo is None:
             now = now.replace(tzinfo=ZoneInfo(self.timezone))
         else:
             now = now.astimezone(ZoneInfo(self.timezone))
+        return now
+
+    def _local_minutes(self, when: datetime | None) -> int:
+        now = self._local_time(when)
         return now.hour * 60 + now.minute
+
+    def _weekly_open(self, when: datetime | None, warmup: int) -> bool:
+        now = self._local_time(when)
+        minutes = now.hour * 60 + now.minute
+        # Yesterday can still be open after midnight; tomorrow's warmup can
+        # begin today. Comparing local wall-clock minutes also follows DST.
+        for offset in (-1, 0, 1):
+            window = self.weekly[WEEKDAYS[(now.weekday() + offset) % 7]]
+            if window is None:
+                continue
+            opening, closing = window
+            start = offset * 1440 + opening
+            end = offset * 1440 + closing + (1440 if closing <= opening else 0)
+            if start - warmup <= minutes < end:
+                return True
+        return False
 
     def is_open(self, when: datetime | None = None) -> bool:
         if not self.enabled:
             return True
+        if self.weekly:
+            return self._weekly_open(when, 0)
         return self._in_window(
             self._local_minutes(when),
             self.open_minutes,
@@ -172,6 +198,8 @@ class Hours:
         """
         if not self.enabled:
             return True
+        if self.weekly:
+            return self._weekly_open(when, self.warmup_minutes)
         start = (self.open_minutes - self.warmup_minutes) % (24 * 60)
         return self._in_window(
             self._local_minutes(when),
@@ -1089,7 +1117,7 @@ def parse_hours(hraw) -> Hours:
         raise ConfigError("hours must be an object")
     _reject_unknown(
         hraw,
-        {"timezone", "open", "close", "warmup_minutes"},
+        {"timezone", "open", "close", "weekly", "warmup_minutes"},
         "hours",
     )
     tz_name = _require(hraw, "timezone", str)
@@ -1099,13 +1127,35 @@ def parse_hours(hraw) -> Hours:
         raise ConfigError(
             f"hours.timezone is not a valid IANA zone: {tz_name!r}"
         ) from e
-    open_s = _require(hraw, "open", str)
-    close_s = _require(hraw, "close", str)
     warmup = _int(hraw, "warmup_minutes", 15, label="hours.warmup_minutes")
     if warmup < 0 or warmup > 12 * 60:
         raise ConfigError(
             f"hours.warmup_minutes must be 0–720, got {warmup}"
         )
+    if "weekly" in hraw:
+        if "open" in hraw or "close" in hraw:
+            raise ConfigError("hours.weekly cannot be mixed with daily open/close")
+        raw_week = _require(hraw, "weekly", dict)
+        _reject_unknown(raw_week, set(WEEKDAYS), "hours.weekly")
+        if any(day not in raw_week for day in WEEKDAYS):
+            raise ConfigError("hours.weekly must specify all seven days; use null for closed days")
+        weekly = {}
+        for day in WEEKDAYS:
+            window = raw_week[day]
+            if window is None:
+                weekly[day] = None
+                continue
+            if not isinstance(window, dict):
+                raise ConfigError(f"hours.weekly.{day} must be an open/close object or null")
+            _reject_unknown(window, {"open", "close"}, f"hours.weekly.{day}")
+            weekly[day] = (
+                _parse_hhmm(_require(window, "open", str), f"hours.weekly.{day}.open"),
+                _parse_hhmm(_require(window, "close", str), f"hours.weekly.{day}.close"),
+            )
+        return Hours(enabled=True, timezone=tz_name, open="weekly", close="weekly",
+                     warmup_minutes=warmup, weekly=weekly)
+    open_s = _require(hraw, "open", str)
+    close_s = _require(hraw, "close", str)
     return Hours(
         enabled=True,
         timezone=tz_name,

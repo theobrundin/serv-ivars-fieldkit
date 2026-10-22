@@ -1,0 +1,22 @@
+{
+  "restaurant_name": "Ivar's",
+  "site_name": "Lakewood Seafood Bar",
+  "device_id": "serv-ivars-001",
+  "location_id": "ivars-001",
+  "location_number": "001",
+  "address": "10114 S Tacoma Way, Tacoma, WA 98499",
+  "phone": "+1-253-588-4773",
+  "hours": {
+    "timezone": "America/Los_Angeles",
+    "warmup_minutes": 15,
+    "weekly": {
+      "mon": {"open": "11:00", "close": "21:00"},
+      "tue": {"open": "11:00", "close": "21:00"},
+      "wed": {"open": "11:00", "close": "21:00"},
+      "thu": {"open": "11:00", "close": "21:00"},
+      "fri": {"open": "11:00", "close": "22:00"},
+      "sat": {"open": "11:00", "close": "22:00"},
+      "sun": {"open": "11:00", "close": "21:00"}
+    }
+  }
+}
