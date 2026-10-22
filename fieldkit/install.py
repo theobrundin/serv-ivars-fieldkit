@@ -63,8 +63,12 @@ def install(approved_sha, profiles, preferred, lane_empty=False):
     for p in (source / 'plate_reader').glob('*.py'):
         installed = Path('/opt/serv-reolink/plate_reader') / p.name
         if (not installed.exists() or installed.is_symlink() or installed.stat().st_uid != 0
-                or installed.stat().st_mode & 0o022 or installed.read_bytes() != p.read_bytes()):
+                or installed.read_bytes() != p.read_bytes()):
             raise ValueError('Application source differs: ' + p.name)
+    application_tree = Path('/opt/serv-reolink')
+    code_paths = [application_tree, *application_tree.rglob('*')]
+    if any(p.is_symlink() or p.stat().st_uid != 0 for p in code_paths):
+        raise ValueError('Application tree contains non-root-owned files or symbolic links; review before adoption')
     if Path('/opt/serv-bench-network/serv-cellular-supervisor').read_bytes() != (source / 'scripts/serv-cellular-supervisor').read_bytes():
         raise ValueError('Cellular core differs; refusing an unreviewed ownership migration')
     backup = Path('/var/backups') / ('serv-ivars-' + time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()))
@@ -73,6 +77,10 @@ def install(approved_sha, profiles, preferred, lane_empty=False):
                  '/opt/serv-bench-network/cellular.py'):
         target = backup / name.lstrip('/'); target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(name, target)
+    # Source hashes match, but the original bench tar retained group-write
+    # permission bits. Tighten the root-owned tree, including Python caches.
+    for p in code_paths:
+        p.chmod(0o755 if p.is_dir() else 0o644)
     # All executable assets are copied from the exact immutable Git object,
     # not untracked files which might be present in this checkout.
     root = Path('/opt/serv-field'); root.mkdir(mode=0o755); root.chmod(0o755)

@@ -97,7 +97,7 @@ Ivar's. No bench queue is copied into the production queue.
 5. Review and install one exact commit using the human-run command below.
    This is a host install, not a Python-only fleet update. It leaves the app in
    sandbox mode, installs the IP-camera hours timer, preserves cellular session
-   ownership, enables key-only Tailscale administration, permits local camera
+   ownership, tightens root-owned code permissions, enables key-only Tailscale administration, permits local camera
    DHCP, and removes the temporary raw-text viewer from the Stream webhook list.
 6. At the actual mounting position, label real vehicle passes in daylight and
    darkness. Measure recognized, unreadable and false detections; include a
@@ -139,6 +139,10 @@ rollback. Keep Tailscale access and local recovery available during installation
   automatically. This observes one boot, not repeated field cold-boot acceptance.
 - Main camera reception remained about 15 fps, PR health 95, zero buffered
   frames, zero throttle flags. Camera traffic routed locally through `wlan0`.
+- All 22 installed application Python files and the cellular recovery core
+  match this source byte for byte. Root-owned application files/directories
+  retained group-write permission bits from bench setup; the reviewed installer
+  removes those bits. That permission change has not yet been installed.
 - A synthetic sandbox test used the installed PR payload parser, unchanged
   normalizer/hasher and real durable Sender. AWS received a hash, created a
   customer and retained MMC. Exact retry returned duplicate without a second
