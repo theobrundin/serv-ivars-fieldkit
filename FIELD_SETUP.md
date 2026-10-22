@@ -4,6 +4,12 @@
 field production activation is not complete.** Do not ship based on a green PR
 process alone. Remaining gates are listed below with measured evidence.
 
+For a new operator, use [OPERATOR_HANDOFF.md](OPERATOR_HANDOFF.md) first.
+Initial adoption and the open-Wi-Fi update are both installed; the installation
+commands retained below are historical maintenance references, not onboarding
+steps. Current installed release is
+`29b16c8626b31866663bf3bf3b74513717a64cd2`, verified 22 October 2026.
+
 This is a dedicated operator workflow for the existing Tapo C113 + Raspberry
 Pi 5 + Sixfab unit. Its recognition core comes from the reviewed Serv source;
 it is not a new recognizer or a fleet-wide installer. The current physical
@@ -88,31 +94,28 @@ Ivar's. No bench queue is copied into the production queue.
    schedule is now supplied above. The shared parser supports complete weekly
    schedules, overnight windows, closed days and 15-minute capture warmup.
    Existing daily configurations retain their behaviour.
-2. Prepare the production profile with `fieldkit.prepare_profiles` on the Pi,
-   supplying the private production identity and
-   `--site-file fieldkit/sites/ivars-001.json`. Run from the reviewed release
-   checkout so validation uses the proposed weekday-aware parser. The installed
-   bench parser remains unchanged until the approved install. Preparing profiles
-   changes no service.
-3. Set the same time zone for `ivars-001` in the existing AWS
+2. **Complete:** the production profile is prepared and installed privately,
+   using `fieldkit/sites/ivars-001.json` and the installed weekday-aware parser.
+   Do not regenerate keys or overwrite profiles for operator onboarding.
+3. **Complete:** the same time zone for `ivars-001` is set in the existing AWS
    `LOCATION_TIMEZONES` environment mapping for AggregateVisits,
    AggregateDetectionEvents and Analytics, preserving other mappings and
-   environment values. The existing default is Eastern time. Verify local
+   environment values. The existing default is Eastern time. Still verify local
    day/hour buckets before activation. Device metadata alone does not configure
    these functions. No cloud function code change is required for this mapping.
 4. The operator explicitly requested that `SERV-Camera` remain open. Preserve
-   that choice. The initial installed release still requires secured Wi-Fi;
-   the prepared operator update records `allow_open_camera_wifi: true` in the
-   root-owned unit manifest and permits this explicit site exception. Status
+   that choice. **Complete:** the installed operator update records
+   `allow_open_camera_wifi: true` in the root-owned unit manifest and permits
+   this explicit site exception. Status
    still reports `camera_wifi_secured: false`. It grants no internet transit
    and does not waive day/night/lane acceptance. An open radio provides no
    Wi-Fi authentication or link encryption. Keep manual addressing, isolated
    DHCP and camera internet blocking. Recheck RTSP after a camera power cycle.
-5. Review and install one exact commit using the human-run command below.
-   This is a host install, not a Python-only fleet update. It leaves the app in
-   sandbox mode, installs the shared weekday-hours parser and IP-camera hours timer, preserves cellular session
-   ownership, tightens root-owned code permissions, enables key-only Tailscale administration, permits local camera
-   DHCP, and removes the temporary raw-text viewer from the Stream webhook list.
+5. **Complete:** the human-approved host installation left the app in sandbox,
+   installed the shared weekday-hours parser and IP-camera hours timer,
+   preserved cellular session ownership, tightened root code permissions,
+   enabled key-only OpenSSH over Tailscale, permitted local camera DHCP, and
+   removed the temporary raw-text viewer from Stream. Do not rerun adoption.
 6. At the actual mounting position, label real vehicle passes in daylight and
    darkness. Measure recognized, unreadable and false detections; include a
    returning vehicle, two close vehicles, cross traffic and a slow/stopped car.
@@ -129,6 +132,7 @@ Ivar's. No bench queue is copied into the production queue.
    an actual WAN outage and restored delivery. Never inject a synthetic customer
    into `ivars-001` to make the acceptance test look complete.
 
+**Historical initial-install reference — already completed.**
 Human approval is required by AGENTS.md/SECURITY.md. An agent must not run this
 command on the human's behalf or supply its own approval:
 
@@ -158,7 +162,8 @@ rollback. Keep Tailscale access and local recovery available during installation
 - All 22 installed application Python files and the cellular recovery core
   match this source byte for byte. Root-owned application files/directories
   retained group-write permission bits from bench setup; the reviewed installer
-  removes those bits. That permission change has not yet been installed.
+  removes those bits. That permission change was subsequently installed, as
+  recorded in the installed sandbox acceptance below.
 - A synthetic sandbox test used the installed PR payload parser, unchanged
   normalizer/hasher and real durable Sender. AWS received a hash, created a
   customer and retained MMC. Exact retry returned duplicate without a second
@@ -217,11 +222,12 @@ Effective SSH now disables password login; a new public-key session succeeded.
 The source hardening script now uses that precedence and verifies readback.
 The firewall allows SSH only on Tailscale and camera DHCP on `wlan0`; camera
 forwarding and wrong-interface camera routes remain blocked. The open hotspot
-was not reconfigured. The pending operator update needs its own human-approved
-SHA and records the user's open-Wi-Fi preference without restarting recognition.
+was not reconfigured. The operator update was separately human-approved and
+installed afterward, as recorded below.
 
-For that incremental operator update, the human runs this on the Pi after the
-exact commit is staged (do not rerun the initial adoption installer):
+**Historical operator-update reference — already completed.** The original
+incremental update used this command after the exact commit was staged. It
+requires its original base release and must not be rerun on the current host:
 
 ```sh
 sudo /usr/bin/python3 -I /home/serv/ivars-release/fieldkit/update_operator.py \
@@ -236,6 +242,17 @@ files; sudden-power-loss recovery is not claimed. The 36 field-tool tests pass,
 including an isolated filesystem test of successful adoption of this policy
 and rollback after a simulated final-manifest write failure. The running app,
 camera network and recognition code are not changed by this update.
+
+## Installed operator update, 22 October 2026, 00:36 Pacific verification
+
+The human installed release `29b16c8626b31866663bf3bf3b74513717a64cd2`.
+Readback confirms `camera_wifi_open_authorized: true` while
+`camera_wifi_secured: false`; acceptance checks remain mandatory. The unit is
+still in sandbox with its bench identity. PR is receiving 15 fps, health 95,
+zero buffered frames, and the camera route is local through `wlan0`.
+The app, Stream, cellular supervisor and camera isolation are active;
+Tailscale is reachable through cellular, and there are no throttle flags.
+The dry-run queue is local evidence, not a production delivery count.
 
 Still unverified: production activation, real onsite day/night
 accuracy and traffic geometry, cloud local-day buckets, whole-unit cold boot
