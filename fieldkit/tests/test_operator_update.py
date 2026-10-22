@@ -12,6 +12,8 @@ from fieldkit import update_operator as updater
 
 class OperatorUpdateTests(unittest.TestCase):
     def exercise(self, fail_manifest=False):
+        previous_umask = os.umask(0o077)
+        self.addCleanup(os.umask, previous_umask)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             def mapped(value):
