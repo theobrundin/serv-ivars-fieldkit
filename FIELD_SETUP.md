@@ -14,8 +14,10 @@ that condition. AWS identity is independent of the Linux hostname.
 
 Install Tailscale and FFmpeg (including `ffplay`) on your computer. Join the
 authorized Serv tailnet and have your personal SSH public key enrolled on this
-Pi. Repository access does not confer device access. Verify the Pi's SSH host
-key through an existing trusted operator; never disable host-key checking.
+Pi. Repository access does not confer device access. The CLI pins this Pi's
+public SSH host key in `fieldkit/known_hosts`, obtained through the existing
+verified SSH session. There are no private SSH keys in the repository. A host-
+key mismatch needs an identity review; never disable host-key checking.
 
 ```sh
 ./serv status

@@ -14,6 +14,7 @@ REMOTE = ['python3', '-m', 'fieldkit.host']
 
 def ssh(command, tty=False):
     return ['ssh', '-t' if tty else '-T', '-o', 'HostKeyAlias=servtest.local',
+            '-o', 'UserKnownHostsFile=' + str(Path(__file__).resolve().parent / 'fieldkit/known_hosts'),
             '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10',
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
             HOST, shlex.join(command)]
