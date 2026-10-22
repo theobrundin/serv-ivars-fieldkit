@@ -112,6 +112,7 @@ def status():
                       'addresses': ts.get('TailscaleIPs', []), 'key_expiry': ts.get('Self', {}).get('KeyExpiry')},
         'camera_local_route': cr.get('dev') == 'wlan0' and not cr.get('gateway'),
         'camera_wifi_secured': security in ('wpa-psk', 'sae'), 'camera': camera_status(),
+        'camera_wifi_open_authorized': unit.get('allow_open_camera_wifi') is True,
         'services': {s: run(['systemctl', 'is-active', s])[1] for s in
                      (APP, STREAM, 'serv-bench-cellular.service', 'serv-camera-isolation.service')},
         'queue': queue_counts(CONFIG.parent / ('queue.db' if cfg_mode == 'production' else 'queue.dry-run.db'))}

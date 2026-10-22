@@ -61,9 +61,17 @@ ClientAliveCountMax 2
 LogLevel VERBOSE
 EOF
 install -m 600 -o root -g root "$ssh_tmp" \
-  /etc/ssh/sshd_config.d/60-serv-hardening.conf
+  /etc/ssh/sshd_config.d/00-serv-hardening.conf
 rm -f "$ssh_tmp"
+# OpenSSH uses the first value found. Cloud images commonly ship an earlier
+# 50-cloud-init.conf with PasswordAuthentication yes, which defeated 60-serv.
+rm -f /etc/ssh/sshd_config.d/60-serv-hardening.conf
 sshd -t
+effective_password_auth="$(sshd -T | awk '$1 == "passwordauthentication" {print $2}')"
+if [[ "$effective_password_auth" != "$password_auth" ]]; then
+  echo "SSH authentication precedence differs; review the earlier configuration" >&2
+  exit 1
+fi
 
 systemctl daemon-reload
 systemctl enable --now serv-firewall.service

@@ -9,7 +9,7 @@ from datetime import datetime
 from xml.etree import ElementTree as E
 from unittest.mock import patch
 
-from fieldkit import host, provision, control, install
+from fieldkit import host, provision, control, install, update_operator
 from fieldkit import image
 from fieldkit.cloud_timezone import merge_mapping
 
@@ -147,6 +147,43 @@ class FieldTests(unittest.TestCase):
         self.assertEqual(merge_mapping('ljs-louisville-001=America/New_York,ivars-001=UTC', 'America/Los_Angeles'),
                          'ljs-louisville-001=America/New_York,ivars-001=America/Los_Angeles')
         with self.assertRaises(ValueError): merge_mapping('malformed', 'UTC')
+
+    def test_open_wifi_requires_explicit_choice_for_exact_site(self):
+        unit = {'device_id': 'serv-ivars-001', 'location_id': 'ivars-001', 'allow_open_camera_wifi': True}
+        self.assertTrue(control.open_wifi_authorized(unit))
+        for other in ({}, {**unit, 'allow_open_camera_wifi': False}, {**unit, 'allow_open_camera_wifi': 'true'},
+                      {**unit, 'device_id': 'different'}, {**unit, 'location_id': 'different'}):
+            self.assertFalse(control.open_wifi_authorized(other))
+
+    def test_open_wifi_exception_does_not_waive_site_acceptance(self):
+        state = {'camera_wifi_secured': False, 'camera_local_route': True,
+                 'tailscale': {'running': True}, 'camera': {'healthy': True}}
+        config = {'device_id': 'serv-ivars-001', 'location_id': 'ivars-001',
+                  'api_base': 'https://example.invalid', 'api_key': '0'*64,
+                  'hours': {'timezone': 'America/Los_Angeles', 'open': '11:00', 'close': '21:00'}}
+        (self.root/'unit.json').write_text(json.dumps({**config, 'allow_open_camera_wifi': True}))
+        with patch.object(control, 'ROOT', self.root), patch.object(host, 'status', return_value=state), \
+                patch.object(control, 'command', return_value='yes'), patch('requests.post') as request:
+            request.return_value.status_code = 200
+            checks = control.production_checks(config)
+        self.assertTrue(checks['camera_wifi_policy_accepted'])
+        self.assertFalse(checks['day_view_measured'])
+        self.assertFalse(checks['night_view_measured'])
+        self.assertFalse(checks['lane_counting_measured'])
+        self.assertFalse(checks['evidence_for_this_site'])
+        self.assertFalse(all(checks.values()))
+
+    def test_operator_update_requires_explicit_open_wifi_choice_before_operations(self):
+        with patch.object(update_operator, 'run') as run:
+            with self.assertRaises(ValueError): update_operator.update('a'*40, False)
+            run.assert_not_called()
+
+    def test_operator_update_atomic_file_is_complete_and_private(self):
+        path=self.root/'unit.json'
+        update_operator.atomic(path,b'{"allow_open_camera_wifi":true}',0o600)
+        self.assertEqual(json.loads(path.read_text()), {'allow_open_camera_wifi': True})
+        self.assertEqual(path.stat().st_mode & 0o777,0o600)
+        self.assertEqual(list(self.root.glob('.operator-*')),[])
 
 
 if __name__ == '__main__':

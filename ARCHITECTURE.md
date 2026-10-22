@@ -813,9 +813,18 @@ client. Its manual host installer requires a human-approved exact commit,
 checks the physical Tailscale identity and existing application/cellular-core
 bytes, and retains the exact modem session state. It is outside the fleet
 updater. Installation leaves backend delivery disabled. Production activation
-uses a separate private profile, confirmed open hours, secured camera Wi-Fi,
+uses a separate private profile, confirmed open hours, an accepted camera Wi-Fi policy,
 AWS authentication and recorded site acceptance. This kit has not yet passed
 installed field acceptance; see `FIELD_SETUP.md`.
+
+The operator explicitly requested that `SERV-Camera` remain open. The optional
+root-owned unit flag `allow_open_camera_wifi: true` records that choice for
+`serv-ivars-001`/`ivars-001`; its absence retains the secured-Wi-Fi gate.
+Status reports open Wi-Fi separately and never calls it secured. Camera
+internet isolation, Tailscale-only management, and actual day/night/lane
+acceptance remain required. `fieldkit/update_operator.py` is a separately
+human-approved incremental update for the installed commissioning sandbox;
+it preserves the running camera, app configuration and recognition core.
 
 The IP-camera hours timer controls `serv-tapo-stream.service` directly; it must
 not invoke the IMX296/MediaMTX capture helper. A boot-local condition marker is

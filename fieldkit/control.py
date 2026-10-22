@@ -62,11 +62,13 @@ def reconcile():
 
 def production_checks(config):
     state = host.status()
+    # main() has verified this root-owned manifest and its physical unit.
+    unit = host.read_json(ROOT / 'unit.json')
     evidence = host.read_json(ROOT / 'commissioning.json') if (ROOT / 'commissioning.json').exists() else {}
     checks = {
         'own_identity': config.get('device_id') == 'serv-ivars-001' and config.get('location_id') == 'ivars-001',
         'hours_configured': bool(config.get('hours')),
-        'secured_camera_wifi': state['camera_wifi_secured'],
+        'camera_wifi_policy_accepted': state['camera_wifi_secured'] or open_wifi_authorized(unit),
         'camera_local': state['camera_local_route'],
         'tailscale_running': state['tailscale']['running'],
         'clock_synchronized': command(['timedatectl', 'show', '-p', 'NTPSynchronized', '--value']) == 'yes',
@@ -89,6 +91,13 @@ def production_checks(config):
     except requests.RequestException:
         checks['aws_authentication'] = False
     return checks
+
+
+def open_wifi_authorized(unit):
+    """An explicit per-unit operator choice; never describe open Wi-Fi as secured."""
+    return (unit.get('allow_open_camera_wifi') is True
+            and unit.get('device_id') == 'serv-ivars-001'
+            and unit.get('location_id') == 'ivars-001')
 
 
 def mode(name, lane_empty):

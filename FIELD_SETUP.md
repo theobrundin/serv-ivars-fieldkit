@@ -1,7 +1,7 @@
 # Ivar's location 001 — operator setup and acceptance
 
-**Current state: cloud identities and operator software prepared; field
-production activation is not complete.** Do not ship based on a green PR
+**Current state: cloud identities and operator software installed in sandbox;
+field production activation is not complete.** Do not ship based on a green PR
 process alone. Remaining gates are listed below with measured evidence.
 
 This is a dedicated operator workflow for the existing Tapo C113 + Raspberry
@@ -100,11 +100,14 @@ Ivar's. No bench queue is copied into the production queue.
    environment values. The existing default is Eastern time. Verify local
    day/hour buckets before activation. Device metadata alone does not configure
    these functions. No cloud function code change is required for this mapping.
-4. Secure `SERV-Camera` with WPA2/WPA3 and pair the camera to it again. The
-   current bench hotspot is open. Do this with the Tapo phone app available and
-   a working Tailscale/cellular management session. Keep manual addressing and
-   isolated DHCP; do not replace the profile with NetworkManager's internet-
-   sharing hotspot command. Recheck RTSP after pairing and a camera power cycle.
+4. The operator explicitly requested that `SERV-Camera` remain open. Preserve
+   that choice. The initial installed release still requires secured Wi-Fi;
+   the prepared operator update records `allow_open_camera_wifi: true` in the
+   root-owned unit manifest and permits this explicit site exception. Status
+   still reports `camera_wifi_secured: false`. It grants no internet transit
+   and does not waive day/night/lane acceptance. An open radio provides no
+   Wi-Fi authentication or link encryption. Keep manual addressing, isolated
+   DHCP and camera internet blocking. Recheck RTSP after a camera power cycle.
 5. Review and install one exact commit using the human-run command below.
    This is a host install, not a Python-only fleet update. It leaves the app in
    sandbox mode, installs the shared weekday-hours parser and IP-camera hours timer, preserves cellular session
@@ -186,10 +189,55 @@ All three live Lambda environment mappings read back `America/Los_Angeles`
 for `ivars-001`. Evaluating the previously verified shared cloud helper with
 those live mappings gives the correct summer/winter local day/hour and the
 25-hour November DST day. This is configuration verification, not a real
-production Visit/aggregation test. The Pi's installed scheduler has not changed.
+production Visit/aggregation test. The scheduler was subsequently installed
+by the human operator as recorded below.
 
-Still unverified: reviewed host installation, production activation,
-secured-camera re-pair, real onsite day/night
+## Installed sandbox acceptance, 21 October 2026, 23:28 Pacific
+
+The human installed release `768983ae4177ddc0bcc555c74f215655893ecd6d`.
+All installed application and operator Python files matched that release;
+root code ownership and permissions passed. PR received 14.8 fps, health 95,
+with zero buffered frames. Camera RTSP routed locally through `wlan0`;
+cellular was the default at metric 50 and Tailscale SSH worked. The hours
+timer was enabled and its oneshot completed successfully. Evaluating the
+installed scheduler against the private production profile passed all 10,080
+minutes of a complete week. Sandbox continues all-day capture until activation.
+
+The installed parser/hash/Sender cloud test passed again: private sandbox
+customer, descriptive MMC, queue drain, exact-retry deduplication, invalid-key
+rejection and cross-location denial. Its first HTTP request took 2,526 ms;
+it bypassed camera OCR, detector voting and the running app. No production
+Visit was sent. `doctor` verified production authentication, local camera
+routing, synchronized time and Tailscale; site acceptance remains incomplete.
+
+Post-install inspection caught `50-cloud-init.conf` overriding the intended
+SSH password setting in `60-serv-hardening.conf`. The same approved settings
+were moved to `00-serv-hardening.conf`, backed up, syntax-checked and reloaded.
+Effective SSH now disables password login; a new public-key session succeeded.
+The source hardening script now uses that precedence and verifies readback.
+The firewall allows SSH only on Tailscale and camera DHCP on `wlan0`; camera
+forwarding and wrong-interface camera routes remain blocked. The open hotspot
+was not reconfigured. The pending operator update needs its own human-approved
+SHA and records the user's open-Wi-Fi preference without restarting recognition.
+
+For that incremental operator update, the human runs this on the Pi after the
+exact commit is staged (do not rerun the initial adoption installer):
+
+```sh
+sudo /usr/bin/python3 -I /home/serv/ivars-release/fieldkit/update_operator.py \
+  --approved-sha FULL_REVIEWED_40_CHARACTER_COMMIT --allow-open-camera-wifi
+```
+
+The updater requires the exact installed base release, verified application
+and operator bytes, a clean approved checkout, and the sandbox configuration.
+It snapshots the old operator package and unit manifest, then writes the new
+operator package and explicit policy. An ordinary write failure restores old
+files; sudden-power-loss recovery is not claimed. The 36 field-tool tests pass,
+including an isolated filesystem test of successful adoption of this policy
+and rollback after a simulated final-manifest write failure. The running app,
+camera network and recognition code are not changed by this update.
+
+Still unverified: production activation, real onsite day/night
 accuracy and traffic geometry, cloud local-day buckets, whole-unit cold boot
 after conversion, and cellular/Wi-Fi failover with a second adapter.
 
