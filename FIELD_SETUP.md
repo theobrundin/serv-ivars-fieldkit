@@ -174,10 +174,12 @@ rollback. Keep Tailscale access and local recovery available during installation
   control implementations could not raise its bitrate. A prior distant CDU
   plate occupied only 86 pixels of width, so 15-metre readability is unresolved.
 
-The Lakewood schedule update adds 9 tests (29 field-tool tests now pass),
+The Lakewood schedule update adds 10 tests (30 field-tool tests now pass),
 including every minute of a complete week, UTC/local weekday boundaries,
 daylight saving, overnight windows, warmup across midnight and refusal of an
-unrecognized app migration. Architecture (75), Stream (331) and AWS (39)
+unrecognized app migration. Preflight verified 22 AppleDouble sidecars left by
+the original Mac tar; the installer tolerates only their known names and binary
+metadata header, while unexpected Python modules still fail. Architecture (75), Stream (331) and AWS (39)
 remain passing; the pipeline retains exactly the same four baseline failures.
 AWS Device metadata now contains the supplied site address, phone and hours.
 All three live Lambda environment mappings read back `America/Los_Angeles`

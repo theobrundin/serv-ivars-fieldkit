@@ -24,11 +24,21 @@ BENCH_CONFIG_SHA256 = '5d5a5dd0c057ea14eb5e9fef07af961e89e4c80f80ea5df60fbd271e7
 
 
 def application_updates(approved, installed_root):
-    if {p.name for p in installed_root.glob('*.py')} != set(approved):
+    installed_files = {}
+    for p in installed_root.glob('*.py'):
+        # The original Mac tar included AppleDouble resource-fork sidecars.
+        # They cannot be Python module names. Ignore only verified metadata
+        # for a known source file; arbitrary extra .py files still fail closed.
+        if (p.name.startswith('._') and p.name[2:] in approved
+                and not p.is_symlink() and p.stat().st_uid == 0
+                and p.read_bytes()[:8] == bytes.fromhex('0005160700020000')):
+            continue
+        installed_files[p.name] = p
+    if set(installed_files) != set(approved):
         raise ValueError('Installed application module list differs')
     updates = {}
     for name, expected in approved.items():
-        installed = installed_root / name
+        installed = installed_files[name]
         if installed.is_symlink() or installed.stat().st_uid != 0:
             raise ValueError('Application source is not root-owned regular code: ' + name)
         actual = installed.read_bytes()

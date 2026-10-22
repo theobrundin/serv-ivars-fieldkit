@@ -122,6 +122,15 @@ class AdoptionMigrationTests(unittest.TestCase):
                 with self.assertRaises(ValueError): install.application_updates(approved, self.root(changed))
         self.assertEqual(install.application_updates(approved, self.root(approved)), {})
 
+    def test_mac_metadata_is_accepted_only_with_known_name_and_real_header(self):
+        approved = {'config.py': b'approved'}
+        header = bytes.fromhex('0005160700020000')
+        self.assertEqual(install.application_updates(approved, self.root({
+            **approved, '._config.py': header + b'metadata'})), {})
+        for extra in ({'._config.py': b'python or unknown data'}, {'._extra.py': header}):
+            with self.assertRaises(ValueError):
+                install.application_updates(approved, self.root({**approved, **extra}))
+
 
 if __name__ == '__main__':
     unittest.main()
