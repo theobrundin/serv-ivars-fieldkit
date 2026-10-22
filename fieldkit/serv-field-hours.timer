@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Ivar's capture schedule every thirty seconds
+
+[Timer]
+OnBootSec=5
+OnUnitActiveSec=30
+AccuracySec=1
+Unit=serv-field-hours.service
+
+[Install]
+WantedBy=timers.target

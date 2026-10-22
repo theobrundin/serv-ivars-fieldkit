@@ -1,0 +1,24 @@
+# These interfaces are camera links, never internet transit links. Input/output
+# to the Pi is still permitted: local RTSP does not traverse the forward hook.
+destroy table inet serv_camera_isolation
+table inet serv_camera_isolation {
+  counter camera_forward_blocked { }
+  counter camera_wrong_route_blocked { }
+  chain input {
+    type filter hook input priority -100; policy accept;
+    iifname "wwan0" ct state established,related accept
+    iifname "wwan0" meta l4proto { icmp, ipv6-icmp } accept
+    iifname "wwan0" udp dport 41641 accept
+    iifname "wwan0" drop
+  }
+  chain forward {
+    type filter hook forward priority -100; policy accept;
+    iifname { "eth0", "wlan0" } counter name camera_forward_blocked drop
+    oifname { "eth0", "wlan0" } counter name camera_forward_blocked drop
+  }
+  chain output {
+    type filter hook output priority -100; policy accept;
+    ip daddr 192.168.50.0/24 oifname != "eth0" counter name camera_wrong_route_blocked drop
+    ip daddr 10.42.0.0/24 oifname != "wlan0" counter name camera_wrong_route_blocked drop
+  }
+}

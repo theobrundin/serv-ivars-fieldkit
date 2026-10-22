@@ -1,0 +1,11 @@
+[Unit]
+Description=Check capture operating hours every minute
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+AccuracySec=1s
+Unit=serv-capture-hours.service
+
+[Install]
+WantedBy=timers.target

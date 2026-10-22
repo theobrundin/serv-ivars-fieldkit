@@ -1,0 +1,17 @@
+[Unit]
+Description=Block camera internet transit and camera routes over cellular
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target NetworkManager.service docker.service
+Wants=network-pre.target
+ConditionHost=servTest
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/serv-bench-network/camera-guard.nft
+ExecReload=/usr/sbin/nft -f /etc/serv-bench-network/camera-guard.nft
+RemainAfterExit=yes
+# Stopping the unit deliberately leaves its isolation rules in place.
+
+[Install]
+WantedBy=multi-user.target

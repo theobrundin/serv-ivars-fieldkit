@@ -1,0 +1,24 @@
+table inet serv_filter {
+    chain input {
+        type filter hook input priority 20; policy drop;
+
+        ct state invalid drop
+        ct state established,related accept
+        iifname "lo" accept
+
+        # Remote administration is private-overlay-only. Tailscale's UDP
+        # transport remains reachable so the overlay can establish directly.
+        iifname "tailscale0" tcp dport 22 accept
+        iifname "tailscale0" ip protocol icmp accept
+        iifname "tailscale0" ip6 nexthdr ipv6-icmp accept
+        udp dport 41641 accept
+
+        # Permit address configuration if Ethernet/Wi-Fi is later enabled.
+        udp sport 67 udp dport 68 accept
+        udp sport 547 udp dport 546 accept
+
+        # IPv6 neighbor discovery and path diagnostics require ICMPv6.
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+    }
+}

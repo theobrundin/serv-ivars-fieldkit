@@ -1,0 +1,30 @@
+[Unit]
+Description=Serv inbound firewall (Tailscale administration only)
+After=network-pre.target
+Before=network.target tailscaled.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStartPre=-/usr/sbin/nft delete table inet serv_filter
+ExecStart=/usr/sbin/nft -f /etc/serv/serv-firewall.nft
+ExecStop=-/usr/sbin/nft delete table inet serv_filter
+RemainAfterExit=yes
+
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=false
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

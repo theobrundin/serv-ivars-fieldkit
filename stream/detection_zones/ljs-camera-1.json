@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "camera_id": "camera-1",
+  "frame": {
+    "width": 1456,
+    "height": 1088
+  },
+  "semantics": {
+    "white": "analyze",
+    "black": "exclude"
+  },
+  "status": "review_only_not_deployed",
+  "decision": "A static mask cannot distinguish a true lane car from a later upper-right exit because both occupy the upper-right corridor. Keep that corridor analyzed and let completed trajectory classify the route.",
+  "exclude_polygons": [
+    {
+      "id": "bottom-left-landscaping-below-plate-zone",
+      "reason": "Unambiguous rocks/post-base area below the plate-identity region and left of the lower-right route-entry region. The polygon intentionally leaves a buffer inside the visible curb.",
+      "normalized_polygon": [
+        [0.0, 0.76],
+        [0.38, 0.76],
+        [0.43, 0.82],
+        [0.47, 0.89],
+        [0.51, 1.0],
+        [0.0, 1.0]
+      ]
+    }
+  ],
+  "preserve_rectangles": [
+    {
+      "id": "full-left-plate-identity-eligibility",
+      "reason": "Matches detection_zone x=0..1, y=0..0.75; valid plate evidence must remain available all the way left.",
+      "normalized_rect": [0.0, 0.0, 1.0, 0.75]
+    },
+    {
+      "id": "menu-board-zone",
+      "reason": "Matches the LJS route/menu-board rectangle and preserves the full left edge.",
+      "normalized_rect": [0.0, 0.0, 0.72, 0.25]
+    },
+    {
+      "id": "lower-right-route-entry-zone",
+      "reason": "A true drive-through vehicle must remain detectable throughout the configured entry zone.",
+      "normalized_rect": [0.52, 0.26, 1.0, 1.0]
+    },
+    {
+      "id": "observed-true-lane-plate-far-upper-right",
+      "reason": "An anonymized route-qualified 28 Aug plate observation; proves the upper-right corridor cannot be statically excluded.",
+      "normalized_rect": [0.8489, 0.1323, 0.8970, 0.2013]
+    },
+    {
+      "id": "observed-true-lane-plate-upper-right",
+      "reason": "A second anonymized route-qualified plate observation in the same corridor.",
+      "normalized_rect": [0.6648, 0.1094, 0.7191, 0.1802]
+    },
+    {
+      "id": "observed-true-lane-plate-left",
+      "reason": "An anonymized route-qualified plate observation near the left side of the menu-board path.",
+      "normalized_rect": [0.1944, 0.0542, 0.2301, 0.1012]
+    }
+  ],
+  "white_probe_points": [
+    {
+      "id": "left-menu-board-edge",
+      "normalized_point": [0.001, 0.12]
+    },
+    {
+      "id": "upper-right-route-overlap",
+      "normalized_point": [0.90, 0.17]
+    },
+    {
+      "id": "lower-right-entry",
+      "normalized_point": [0.80, 0.80]
+    }
+  ],
+  "black_probe_points": [
+    {
+      "id": "landscaping-interior",
+      "normalized_point": [0.10, 0.90]
+    },
+    {
+      "id": "post-base-landscaping",
+      "normalized_point": [0.30, 0.80]
+    }
+  ]
+}

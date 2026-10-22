@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Fixed-function root wrapper for read-only modem telemetry.
+set -euo pipefail
+
+DEV=/dev/cdc-wdm0
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+[[ -d /run/serv ]] || { echo "telemetry runtime directory missing" >&2; exit 1; }
+exec 9>/run/serv/qmi-control.lock
+flock -w 2 9 || exit 75
+
+case "${1:-}" in
+  signal)
+    exec timeout --kill-after=2 8 /usr/bin/qmicli -p -d "$DEV" --nas-get-signal-info
+    ;;
+  serving)
+    exec timeout --kill-after=2 8 /usr/bin/qmicli -p -d "$DEV" --nas-get-serving-system
+    ;;
+  stats)
+    exec timeout --kill-after=2 8 /usr/bin/qmicli -p -d "$DEV" --wds-get-packet-statistics
+    ;;
+  *)
+    echo "usage: serv-qmi-telemetry {signal|serving|stats}" >&2
+    exit 64
+    ;;
+esac

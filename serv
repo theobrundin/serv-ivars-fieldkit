@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Serv field operator CLI. Configuration and credentials remain on the Pi."""
+import argparse
+import json
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+
+HOST = 'serv@100.77.200.119'
+REMOTE = ['python3', '-m', 'fieldkit.host']
+
+
+def ssh(command, tty=False):
+    return ['ssh', '-t' if tty else '-T', '-o', 'HostKeyAlias=servtest.local',
+            '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10',
+            '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
+            HOST, shlex.join(command)]
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest='action', required=True)
+    sub.add_parser('ssh'); sub.add_parser('status'); sub.add_parser('doctor')
+    image = sub.add_parser('image')
+    for key in ('brightness', 'contrast', 'saturation', 'sharpness'):
+        image.add_argument('--' + key, type=int)
+    m = sub.add_parser('metrics'); m.add_argument('--minutes', type=int, default=15)
+    v = sub.add_parser('view'); v.add_argument('--seconds', type=int, default=120)
+    v.add_argument('--allow-cellular', action='store_true', help='Explicitly permit cellular video data for this session')
+    n = sub.add_parser('network'); n.add_argument('preference', choices=('cellular', 'wifi'))
+    mode = sub.add_parser('mode'); mode.add_argument('mode', choices=('sandbox', 'production'))
+    mode.add_argument('--lane-empty', action='store_true', help='Confirm there is no car in the lane before the application restarts')
+    a = p.parse_args()
+    if a.action == 'image':
+        command = ['env', 'PYTHONPATH=/opt/serv-field', 'python3', '-m', 'fieldkit.image']
+        for key in ('brightness', 'contrast', 'saturation', 'sharpness'):
+            value = getattr(a, key)
+            if value is not None:
+                if not 0 <= value <= 100: p.error('Image controls must be 0–100')
+                command.extend(['--' + key, str(value)])
+        return subprocess.call(ssh(command))
+    if a.action == 'ssh':
+        return subprocess.call(ssh(['bash', '-l'], tty=True))
+    if a.action in ('network', 'mode', 'doctor'):
+        cmd = ['sudo', '/usr/local/sbin/serv-field', a.action]
+        if a.action == 'network': cmd.append(a.preference)
+        if a.action == 'mode':
+            cmd.append(a.mode)
+            if a.lane_empty: cmd.append('--lane-empty')
+        return subprocess.call(ssh(cmd, tty=True))
+    if a.action == 'metrics':
+        return subprocess.call(ssh(['env', 'PYTHONPATH=/opt/serv-field', *REMOTE, 'metrics', '--minutes', str(a.minutes)]))
+    if a.action == 'status':
+        return subprocess.call(ssh(['env', 'PYTHONPATH=/opt/serv-field', *REMOTE, 'status']))
+    if not 1 <= a.seconds <= 300:
+        p.error('view duration must be 1–300 seconds')
+    if not shutil.which('ffplay'):
+        p.error('Install FFmpeg (including ffplay) on this computer before live viewing')
+    response = subprocess.run(ssh(['env', 'PYTHONPATH=/opt/serv-field', *REMOTE, 'status']),
+                              capture_output=True, text=True, timeout=45)
+    if response.returncode:
+        print('Cannot read Pi status; preview was not started.', file=sys.stderr); return 1
+    state = json.loads(response.stdout)
+    print('Pi internet connection:', state['internet_interface'])
+    if state['cellular_possible_for_preview'] and not a.allow_cellular:
+        if not sys.stdin.isatty():
+            p.error('Cellular video is possible. Use --allow-cellular only if you approve that data usage.')
+        answer = input('Cellular may carry this preview (~10 MB/min at the current bitrate). Allow it for this session? [y/N] ')
+        if answer.strip().lower() not in ('y', 'yes'):
+            print('Preview not started. Recognition continues.'); return 0
+        a.allow_cellular = True
+    command = ['env', 'PYTHONPATH=/opt/serv-field', *REMOTE, 'view', '--seconds', str(a.seconds)]
+    if a.allow_cellular: command.append('--allow-cellular')
+    source = subprocess.Popen(ssh(command), stdout=subprocess.PIPE)
+    player = subprocess.Popen(['ffplay', '-loglevel', 'error', '-autoexit', '-fflags', 'nobuffer',
+        '-flags', 'low_delay', '-framedrop', '-window_title', 'Ivar’s camera — close to stop preview', '-i', 'pipe:0'],
+        stdin=source.stdout)
+    source.stdout.close()
+    try:
+        player.wait(timeout=a.seconds + 45)
+    except (KeyboardInterrupt, subprocess.TimeoutExpired):
+        pass
+    finally:
+        for proc in (player, source):
+            if proc.poll() is None:
+                proc.terminate()
+                try: proc.wait(timeout=5)
+                except subprocess.TimeoutExpired: proc.kill(); proc.wait()
+    print('Preview stopped. Plate recognition was not stopped.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

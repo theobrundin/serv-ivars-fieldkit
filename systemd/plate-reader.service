@@ -1,0 +1,74 @@
+[Unit]
+Description=Serv plate reader
+# Wait for the network to be fully up before starting — otherwise auth preflight
+# and sender thread make calls into the void on cold boot.
+After=network-online.target tailscaled.service
+Wants=network-online.target
+# Refuse to start without a config file present
+ConditionPathExists=/home/serv/plate_reader/config.json
+# Allow up to 5 restarts in 5 minutes; after that, sit dead until manually
+# restarted. This is what saves the unit from a thrashing crash loop.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+User=serv
+Group=serv
+Nice=-5
+WorkingDirectory=/opt/serv
+Environment=PYTHONUNBUFFERED=1
+
+# --- ultimateALPR runtime environment -------------------------------------
+# systemd does NOT inherit your interactive shell environment. If these are
+# missing the service fails in two different, confusing ways:
+#
+#   LD_LIBRARY_PATH  the DYNAMIC LINKER resolves libultimate_alpr-sdk.so, not
+#                    Python — PYTHONPATH alone is not enough. Without it the
+#                    import dies with
+#                      "libultimate_alpr-sdk.so: cannot open shared object file"
+#                    even though the .so is plainly on PYTHONPATH.
+#   PYTHONPATH       needs BOTH the binaries dir (holding the compiled
+#                    _ultimateAlprSdk.so) and python/ (the SWIG wrapper).
+#
+# Harmless when engine=fast_alpr — the paths are simply unused.
+Environment="LD_LIBRARY_PATH=/home/serv/ultimateALPR-SDK/binaries/linux/aarch64"
+Environment="PYTHONPATH=/opt/serv:/home/serv/ultimateALPR-SDK/python:/home/serv/ultimateALPR-SDK/binaries/linux/aarch64"
+
+ExecStart=/usr/bin/python3 -m plate_reader.main
+# Restart on crash, but with a real limit so a busted config doesn't burn the CPU
+Restart=always
+RestartSec=10
+
+# Capture stderr/stdout to journald (we also write to /var/log/serv via our own
+# logging setup, but journal is the canonical source for `journalctl -u plate-reader`).
+StandardOutput=journal
+StandardError=journal
+
+# Modem access is collected by a separate, tightly confined oneshot. The
+# long-running camera process has no sudo path and can never gain privileges.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/serv/plate_reader /var/log/serv /home/serv/.cache
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RemoveIPC=true
+KeyringMode=private
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

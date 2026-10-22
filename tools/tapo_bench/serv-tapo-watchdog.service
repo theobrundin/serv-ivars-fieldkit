@@ -1,0 +1,24 @@
+[Unit]
+Description=Bounded recovery of the home Tapo recognizer
+After=serv-tapo-stream.service
+ConditionHost=servTest
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/serv-tapo-bench/watchdog.py
+TimeoutStartSec=12
+RuntimeDirectory=serv-tapo-watchdog
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost 10.42.0.36/32

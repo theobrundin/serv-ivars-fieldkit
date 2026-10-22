@@ -1,0 +1,76 @@
+# MediaMTX — exposes the Pi's CSI camera as a local RTSP feed for Stream.
+#
+# Nothing outside this Pi should ever read this stream: it carries raw video
+# of plates. The listener is bound to loopback for that reason; Stream runs
+# on the same host and connects to 127.0.0.1.
+#
+# Uses MediaMTX's native libcamera support (source: rpiCamera) rather than
+# piping rpicam-vid/ffmpeg — fewer moving parts and no extra copy.
+
+logLevel: info
+logDestinations: [stdout]
+
+# Loopback only. Raw plate video must not be reachable from the LAN or the
+# cellular interface.
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+
+# Everything else off — this box serves exactly one local consumer.
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+# MediaMTX 1.21 enables MoQ by default, including external HTTP/QUIC
+# listeners. This unit serves raw plate video only over loopback RTSP.
+moq: no
+api: no
+metrics: no
+
+paths:
+  cam:
+    source: rpiCamera
+    rpiCameraWidth: 1456
+    rpiCameraHeight: 1088
+
+    # CAPTURE RATE — this is a CPU decision on a Pi 5, not just a tuning one.
+    #
+    # The Pi 5 has NO hardware H264 encoder (verified: the only codec device
+    # is /dev/video19 = rpi-hevc-dec, HEVC *decode*; Pi 4's
+    # bcm2835-codec-encode is gone). So every frame here is encoded in
+    # software by x264 and then decoded again in software inside the Stream
+    # container. Measured on this hardware: ~10ms of CPU per 720p frame to
+    # encode, plus roughly half that to decode.
+    #
+    #   30fps -> ~0.30 core encode + ~0.15 decode = ~0.45 core of overhead
+    #   5fps  -> ~0.05 core encode + ~0.025 decode = ~0.075 core
+    #
+    # Stream only needs eFPS 4-5 for sub-30mph traffic, so capturing at 30
+    # and sampling 1-in-6 burns ~0.3 of a core encoding frames that are
+    # decoded and immediately thrown away. LJS captures 5fps and uses
+    # `sample = 1`, so every source frame remains eligible without the extra
+    # software-codec and thermal cost of a 10fps source.
+    #
+    # The `short` exposure profile below addresses motion blur directly;
+    # increasing source FPS is a separate canary and must not be smuggled into
+    # this one. Do not drop below 5fps without a measured site evaluation.
+    #
+    # RESOLUTION MUST MATCH THE SENSOR (1456x1088). The IMX296 is 4:3; asking
+    # for 1280x720 makes libcamera crop to 16:9, throwing away ~25% of the
+    # vertical field of view AND 42% of the pixels. Plate legibility is
+    # driven by pixels-on-plate, and the old in-process pipeline fed the full
+    # 1456x1088 frame, so anything smaller is a straight regression.
+    rpiCameraFPS: 5
+
+    # LJS dusk audit (29 Aug) kept stationary scene detail sharp while moving
+    # vehicles and plates smeared. Prefer libcamera's short-exposure program;
+    # shutter and gain remain automatic so this is a one-variable canary. The
+    # site utility can atomically return this to `normal` if grain or darkness
+    # harms exact OCR after 20:00.
+    rpiCameraExposure: short
+
+    # MUST be `auto`, not `hardwareH264`. The Pi 5 has no H264 encode block
+    # (only /dev/video19 = rpi-hevc-dec, decode), and `hardwareH264` does not
+    # degrade gracefully — MediaMTX logs "using hardware H264 encoder" and
+    # then EXITS 1 on every start. `auto` selects software H264 and works.
+    # Cost me a live outage; do not "optimise" this back.
+    rpiCameraCodec: auto

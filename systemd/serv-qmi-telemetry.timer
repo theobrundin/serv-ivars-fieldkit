@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Serv modem telemetry every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

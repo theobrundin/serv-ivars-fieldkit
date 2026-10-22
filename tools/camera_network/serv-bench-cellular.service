@@ -1,0 +1,24 @@
+[Unit]
+Description=Sixfab cellular recovery for the isolated home camera bench
+After=NetworkManager.service systemd-resolved.service
+Requires=systemd-resolved.service
+Wants=serv-bench-cellular-shutdown.service
+After=serv-bench-cellular-shutdown.service
+ConditionHost=servTest
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/serv-bench-network/cellular.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=100
+RuntimeDirectory=serv-bench-cellular
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+KillMode=mixed
+User=root
+
+[Install]
+WantedBy=multi-user.target

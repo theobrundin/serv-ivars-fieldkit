@@ -1,0 +1,4 @@
+# Pinned for reproducibility across units.
+# When updating: bump versions one at a time and re-test on a bench Pi before rolling.
+requests==2.32.3
+psutil==6.1.0

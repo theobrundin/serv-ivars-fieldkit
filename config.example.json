@@ -1,0 +1,446 @@
+{
+  "//": "Serv plate reader config template. Copy to config.json and fill in.",
+  "//_secrets": "config.json is git-ignored and holds live credentials. NEVER commit it.",
+  "//_coords": "ALL spatial values are NORMALIZED 0.0-1.0, never pixels. See alpr.roi.",
+
+  "device_id": "REPLACE_WITH_serv-unit-XXX",
+  "api_key": "REPLACE_WITH_64_CHAR_HEX_KEY",
+  "location_id": "REPLACE_WITH_LOCATION_ID",
+  "api_base": "https://sb13iibr7f.execute-api.us-east-1.amazonaws.com",
+  "sw_version": "2.1.0",
+  "//_bench_delivery": "Set false for bench tests: no backend requests, separate bounded dry-run queue.",
+  "backend_writes_enabled": true,
+
+  "alpr": {
+    "//": "Recognition engine: 'pr_stream', 'ultimatealpr' (alias",
+    "//_2": "'ultimate_alpr'), or 'fast_alpr'.",
+    "//_pr": "pr_stream is Plate Recognizer Stream. It does NOT run inference",
+    "//_pr2": "in this process: a Docker container reads an RTSP feed from",
+    "//_pr3": "MediaMTX and POSTs results to a loopback webhook this service",
+    "//_pr4": "serves. Selecting it also switches capture to NullCamera, since",
+    "//_pr5": "MediaMTX owns the sensor. See stream/ and docs/STREAM_*.md.",
+    "//_pr6": "The thresholds below are on Plate Recognizer's score scale and",
+    "//_pr7": "are NOT interchangeable with ultimateALPR's - swap both or",
+    "//_pr8": "neither. Tag v2.1.0-ultimatealpr is the rollback point.",
+    "engine": "pr_stream",
+
+    "//license": "PATH to the token FILE. Never paste the token string here.",
+    "//license_2": "If set but unreadable, startup FAILS. It must not fall back",
+    "//license_3": "to trial mode: trial redacts the last plate character, which",
+    "//license_4": "normalize() strips, producing a confident WRONG identity.",
+    "license_token_file": "/home/serv/plate_reader/license.token",
+
+    "//assets": "SDK assets folder (models). Absent = /sdk/assets.",
+    "assets_folder": "/home/serv/ultimateALPR-SDK/assets",
+
+    "roi": {
+      "//": "Where the ENGINE looks for plates (engine detect_roi).",
+      "//units": "NORMALIZED 0.0-1.0 fractions of frame. NOT pixels.",
+      "//why": "Capture resolution varies per unit and can change; a pixel box",
+      "//why_2": "written for one resolution silently means something else at",
+      "//why_3": "another, and plates just stop being detected. Converted to",
+      "//why_4": "pixels once, internally, from the real frame size.",
+      "//default": "enabled:false => full frame, identical to previous behaviour.",
+      "//calibrate": "Run tools/calibrate.py at the mount position to get numbers.",
+      "enabled": false,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 1.0
+    },
+
+    "thresholds": {
+      "//layers": "TWO layers. Engine floors decide what the SDK returns;",
+      "//layers_2": "app floors decide what we trust. Separate so weak reads stay",
+      "//layers_3": "visible for calibration without being trusted. All [0,1].",
+      "detect_minscore": 0.1,
+      "recogn_minscore": 0.3,
+
+      "//score_type": "MUST be 'min'. The SDK default is 'median', which averages",
+      "//score_type_2": "away a single misread character — the exact failure the",
+      "//score_type_3": "min-per-character gate exists to catch.",
+      "recogn_score_type": "min",
+
+      "//app": "Applied in detector.py AFTER the engine returns.",
+      "//app_pr": "PLATE RECOGNIZER SCALE. Its scores sit far higher than",
+      "//app_pr2": "ultimateALPR's (OCR median 0.99), so the old 0.50/0.75 are",
+      "//app_pr3": "effectively no-ops: dscore p25 is 0.880 and only 2/153 reads",
+      "//app_pr4": "fell below 0.75 on labelled footage. Set from the LJS",
+      "//app_pr5": "221-frame field eval - see docs/STREAM_THRESHOLD_TUNING.md.",
+      "//app_pr6": "For ultimateALPR these must go back to 0.50 / 0.75.",
+      "app_detect_min": 0.70,
+      "app_ocr_min": 0.80,
+
+      "//rescue": "PR-only narrow recovery path: 3 exact reads from the SAME",
+      "//rescue2": "physical encounter may fail exactly one normal app gate.",
+      "//rescue3": "Both-gate failures, one/two reads, mixed strings, and reads",
+      "//rescue4": "without a stable encounter id remain misses. This is not a",
+      "//rescue5": "global threshold reduction. Set min_frames=0 to disable.",
+      "consensus_rescue_min_frames": 3,
+      "consensus_rescue_detect_min": 0.65,
+      "consensus_rescue_ocr_min": 0.80,
+
+      "//selected": "PR Stream uses a 3s provider-side temporal window and",
+      "//selected2": "emits its selected best result. Accept that single event",
+      "//selected3": "only with normal gates, a stable vehicle encounter, >=4",
+      "//selected4": "characters, and measured rear-plate geometry. This avoids",
+      "//selected5": "globally lowering vote_min_frames, which admitted live junk.",
+      "provider_selected_single_enabled": true,
+      "provider_selected_single_min_length": 4,
+      "provider_selected_single_min_relative_x": 0.45,
+
+      "//high_ocr_rescue": "PR-only field-calibrated exception for a selected",
+      "//high_ocr_rescue2": "result whose OCR is effectively certain but whose plate",
+      "//high_ocr_rescue3": "localization score alone missed the normal gate. It still",
+      "//high_ocr_rescue4": "requires one stable encounter, no competing text variant,",
+      "//high_ocr_rescue5": ">=4 chars, and the same rear-plate geometry safeguard.",
+      "provider_high_ocr_rescue_enabled": true,
+      "provider_high_ocr_rescue_detect_min": 0.35,
+      "provider_high_ocr_rescue_ocr_min": 0.98,
+
+      "//settle": "Vehicle-first identity: the 27 Aug field audit found two OCR",
+      "//settle2": "variants for one stopped CR-V 1.6s apart. Keep the profile",
+      "//settle3": "provisional long enough to select one identity before hashing.",
+      "//settle4": "The route trigger retains the actual board timestamp; the hash",
+      "//settle5": "is released after 3.5s quiet, bounded at 4s under continued reads.",
+      "identity_settle_quiet_seconds": 3.5,
+      "identity_settle_max_seconds": 4.0
+    },
+
+    "classifiers": {
+      "//profile": "Chosen production profile = plates + vehicle box + colour.",
+      "//profile_2": "Measured 106 ms/frame on a Pi 5, inside the 200 ms budget.",
+      "vehicle_detect_enabled": true,
+      "color_enabled": true,
+
+      "//heavy": "These three together measured ~268 ms/frame = 3.7 fps, which",
+      "//heavy_2": "EXCEEDS the 200 ms budget. Leave off; re-measure if ever needed.",
+      "lpci_enabled": false,
+      "vmmr_enabled": false,
+      "vbsr_enabled": false
+    },
+
+    "engine_advanced": {
+      "//rectify": "DO NOT ENABLE. Read order under rectification is unverified",
+      "//rectify_2": "with Doubango; it may reorder characters on the same physical",
+      "//rectify_3": "plate and change its hash. Hash-stability flag, not a tuning knob.",
+      "rectify_enabled": false,
+
+      "//ienv": "Night-vision enhancement. Also shifts vehicle box coordinates.",
+      "ienv_enabled": false,
+
+      "//pyramidal": "Second-pass search for small/distant plates. Costs time.",
+      "pyramidal_search_enabled": false,
+      "pyramidal_search_sensitivity": 0.28,
+
+      "//threads": "-1 = auto. Explicit 4 measured no better on a Pi 5.",
+      "num_threads": -1,
+
+      "openvino_enabled": false,
+      "npu_enabled": false
+    }
+  },
+
+  "presence": {
+    "//vote": "Frames of AGREEING reads needed to confirm an identity.",
+    "//vote_2": "WARNING: these two keys OVERRIDE thresholds.vote_min_frames and",
+    "//vote_3": "thresholds.vote_window_seconds when present (config.py ~944).",
+    "//vote_4": "Setting only the thresholds copy does nothing — that mistake",
+    "//vote_5": "cost a full 24-minute validation run. Change BOTH, or check the",
+    "//vote_6": "'effective gates' line the service logs at startup.",
+    "//vote_7": "2 for pr_stream: the LJS field eval confirmed 165/176 at two",
+    "//vote_8": "agreeing frames, and a third costs real plates.",
+    "vote_min_frames": 2,
+    "vote_window_seconds": 3.0,
+
+    "dwell_zone": {
+      "//": "Whether a detected vehicle COUNTS as ordering. Distinct from alpr.roi:",
+      "//_2": "the ROI decides where the engine LOOKS, this decides what counts.",
+      "//_why": "Camera sits close to the menu board; exiting cars and background",
+      "//_why2": "road traffic are in frame and must not be counted as customers.",
+      "//_units": "NORMALIZED 0.0-1.0. enabled:false => no positional requirement.",
+      "enabled": false,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 1.0,
+
+      "//anchor": "Which point must be inside the zone:",
+      "//anchor_2": "  plate_center   — centre of the plate box",
+      "//anchor_3": "  vehicle_center — centre of the vehicle box",
+      "//anchor_4": "  vehicle_bottom — bottom-centre; approximates ground contact",
+      "//anchor_5": "                   and does not jitter with plate read noise.",
+      "anchor": "plate_center",
+
+      "//dwell": "Continuous seconds inside the zone before a confirm is allowed.",
+      "//dwell_2": "Time-based, not frame-count — frame counts break when fps varies.",
+      "min_seconds_in_zone": 0.0,
+
+      "//area": "Normalized vehicle-box area (fraction of frame). Depth proxy:",
+      "//area_2": "a car at the speaker fills far more frame than one driving past.",
+      "//area_3": "0.0 disables the check.",
+      "min_vehicle_box_area": 0.0
+    },
+
+    "vehicle_only": {
+      "//": "LEGACY detector-side tracker, retained only for replay diagnostics.",
+      "//_authority": "Production disables this path and uses the presence tracker",
+      "//_authority2": "as the single source of vehicle lifecycle and drive-off events.",
+      "//_authority3": "Do not enable both paths; duplicate unidentified counts result.",
+      "//_needs": "Diagnostic use still requires the SDK vehicle classifier.",
+      "enabled": false,
+
+      "//_move": "What replaces the dwell zone as the noise filter. A car",
+      "//_move2": "driving the lane either crosses the frame or swells as it",
+      "//_move3": "approaches; a parked car does neither, however long it sits.",
+      "//_move4": "EITHER signal alone is enough — a car approaching head-on",
+      "//_move5": "grows while barely moving sideways, and requiring both would",
+      "//_move6": "miss it. Measured need: with no filter at all, footage with 2",
+      "//_move7": "plateless cars produced 20 events, one a parked car held for",
+      "//_move8": "207.68s. Set both to 0 to disable filtering (diagnosis only).",
+      "min_travel_fraction": 0.10,
+      "min_area_growth_ratio": 1.5,
+
+      "//_conf": "App-side floor on the SDK's car-detection confidence. The",
+      "//_conf2": "SDK already gates at car_noplate_detect_min_score (0.8), so",
+      "//_conf3": "0.0 means 'trust the engine', not 'no filtering'.",
+      "min_vehicle_confidence": 0.0,
+
+      "//_req": "Opt back in to the old behaviour of requiring a calibrated",
+      "//_req2": "dwell zone. Leaving this true with no zone means NO missed",
+      "//_req3": "vehicles are counted at all — a logged warning, not silence.",
+      "require_dwell_zone": false
+    },
+
+    "dedup": {
+      "//": "Stops one physical car being counted as several visits.",
+      "//cooldown": "Primary defence: the same hash cannot re-confirm within this",
+      "//cooldown_2": "window. Independent of presence tracking, so read flicker",
+      "//cooldown_3": "cannot defeat it (see STAGE2B_PIPELINE_BRINGUP.md 4.2).",
+      "cooldown_seconds": 120,
+
+      "//absent": "Legacy frame-count absence latch before a re-confirm is allowed.",
+      "release_requires_absent_frames": 3,
+
+      "//absent_s": "Time-based absence requirement; more robust when fps varies.",
+      "//absent_s2": "0.0 keeps the frame-count behaviour above.",
+      "release_requires_absent_seconds": 0.0,
+
+      "//near": "The cooldown above keys on the HASH, so it only catches an",
+      "//near_2": "IDENTICAL repeat. Measured on real footage, one car gave:",
+      "//near_3": "  f02959 CHR7067 -> d532120117e8",
+      "//near_4": "  f02964 CHR706  -> 68d2065f19cd  (truncated, 1.0s later)",
+      "//near_5": "Two hashes, two visits, ONE car. This suppresses a confirm",
+      "//near_6": "within N edits of one just confirmed. It is a VISIT-DEDUP",
+      "//near_7": "rule only — nothing about normalization or hashing changes,",
+      "//near_8": "and NORMALIZATION_SPEC.md is untouched. 0 disables.",
+      "//near_match": "Disabled until edit-distance suppression is constrained to one vehicle track; global fuzzy matching can merge two real cars.",
+      "near_match_max_distance": 0
+    },
+
+    "//tracking": "Vehicle-presence / drive-off tracking (independent of identify).",
+    "enabled": true,
+    "//shadow": "Board geometry is not yet field-validated. Track and log it,",
+    "//shadow2": "but never turn a shadow drive-off into a production Visit.",
+    "shadow_only": true,
+    "camera_position": "behind_cars",
+    "//handoff": "Legacy compatibility key retained so existing unit configs and rollback builds still parse. The current Stream engine does not use speculative geometric plate handoff; only timestamp-owned native trajectories reconcile non-overlapping profiles.",
+    "encounter_handoff_seconds": 5.0,
+    "//board_zone": "Full-width left edge: the corrected camera view places valid menu-board traffic against the far-left boundary. Keep x_max at 0.72 so upper-right pass-through traffic remains outside.",
+    "board_zone": {
+      "x_min_pct": 0.0,
+      "y_min_pct": 0.0,
+      "x_max_pct": 0.72,
+      "y_max_pct": 0.25
+    },
+    "route_qualification": {
+      "//": "LJS full-frame review: true lane traffic first fills the lower-right foreground, then travels up/left into board_zone. Adjacent-road and drive-off traffic appears only in the upper band or exits upper-right.",
+      "//2": "Once authoritative, every recognized or anonymous profile is held on-device until its completed native path qualifies. A plate at board_zone is provisional trigger evidence only because it can still exit upper-right. Anonymous outcomes retain the full 90-second identity-resolution window.",
+      "//3": "30 Aug operator labels found real drive-through vehicles false-rejected by the current geometry. Keep classification in shadow while collecting evidence; reconciliation is independent and uses timestamp-owned native trajectories, never MMC or speculative plate handoff.",
+      "enabled": true,
+      "shadow_only": true,
+      "profile_reconciliation_enabled": true,
+      "entry_zone": {
+        "x_min_pct": 0.52,
+        "y_min_pct": 0.26,
+        "x_max_pct": 1.0,
+        "y_max_pct": 1.0
+      },
+      "//evidence": "27 Aug field audit: defensible lane tracks had 15-21 points over 2.4-3.2s; a manually rejected upper-right GMC crossed both broad zones in only 6 points/1.0s.",
+      "min_trajectory_points": 8,
+      "min_trajectory_duration_seconds": 2.0,
+      "zone_confirm_points": 2,
+      "min_leftward_progress": 0.08,
+      "min_upward_progress": 0.03,
+      "//board_dwell_fallback": "31 Aug field evidence: a real 42-point/29.8s menu-board truck began too near the zone boundary to clear the normal x-progress delta. This fallback still requires ordered entry then board evidence and cannot override an upper-right terminal exit.",
+      "board_dwell_fallback_min_points": 20,
+      "board_dwell_fallback_min_board_points": 8,
+      "board_dwell_fallback_min_seconds": 8.0,
+      "//progressive_board_rescue": "1 Sep audited OR path: after upper-right exits are rejected, accept a short completed track only when it ends in a consecutive board streak and clears the normal left/up progress. A board-only track must remain wholly inside the board zone.",
+      "progressive_board_rescue_min_points": 4,
+      "progressive_board_rescue_min_board_points": 2,
+      "progressive_board_rescue_min_seconds": 0.5,
+      "terminal_exit_zone": {
+        "x_min_pct": 0.72,
+        "y_min_pct": 0.0,
+        "x_max_pct": 1.0,
+        "y_max_pct": 0.28
+      },
+      "//decision_timeout": "A valid 28 Aug lane trajectory arrived about 117 seconds after first recognition; 300 seconds preserves margin for long queues and delayed dwell delivery.",
+      "decision_timeout_seconds": 300.0,
+      "//rejection_grace": "Retain rejected split-track evidence for one minute so a delayed qualified native trajectory can reconcile it before any local route diagnostic is finalized.",
+      "rejection_grace_seconds": 60.0,
+      "unmatched_dwell_cache_seconds": 30.0,
+      "terminal_tombstone_seconds": 300.0
+    },
+    "stop_speed_frac_per_s": 0.02,
+    "stop_confirm_frames": 3,
+    "trigger_max_wait_seconds": 4.0,
+    "depart_hysteresis_pct": 0.05,
+    "iou_match_threshold": 0.3,
+    "track_timeout_seconds": 8.0,
+    "min_track_frames": 3,
+    "motion_area_fraction": 0.12,
+    "color_enabled": true,
+    "color_split_distance": 0.55
+  },
+
+  "capture": {
+    "//": "Capture geometry. imx296 is 1456x1088 native.",
+    "target_fps": 5,
+    "width": 1456,
+    "height": 1088
+  },
+
+  "diagnostics": {
+    "log_per_frame_timing": false,
+
+    "//overlay": "Draw ROI + dwell zone onto the boot-time zone_preview.jpg so",
+    "//overlay_2": "aim and config can be verified remotely in one glance.",
+    "zone_preview_overlay": true,
+
+    "//rejected": "Log reads rejected by the gates, for calibration. Plate strings",
+    "//rejected_2": "are PII-adjacent — this logs at DEBUG, never INFO in production.",
+    "log_rejected_reads": false,
+
+    "//miss": "Keep a bounded all-outcome canary dataset locally:",
+    "//miss_2": "one FULL FRAME per confirmed plate, plate miss, or no_visible_plate vehicle.",
+    "//miss_3": "Plate cases draw the plate bbox; vehicle-only frames remain uncropped.",
+    "//miss_4": "A JPEG plus its JSON sidecar is one case; retain the newest 300 cases total.",
+    "save_miss_plates": true,
+    "miss_plate_dir": "/home/serv/plate_reader/audit_cases",
+    "miss_plate_retain_hours": 0,
+    "miss_plate_max_cases": 300,
+    "save_confirmed_plates": true,
+    "save_unidentified_vehicle_frames": true,
+    "miss_plate_pad": 0.5,
+    "save_presence_frames": false,
+    "presence_frame_dir": "/home/serv/plate_reader/presence_frames"
+  },
+
+  "//legacy": "Below: pre-existing blocks, unchanged.",
+
+  "thresholds": {
+    "//": "Legacy gate values. alpr.thresholds.app_* OVERRIDE the two per-frame",
+    "//_2": "floors below when present, so these numbers are not necessarily",
+    "//_3": "what runs. The service logs the effective gates at startup —",
+    "//_4": "grep 'effective gates' rather than reading these and assuming.",
+    "min_detection_confidence": 0.8,
+    "min_ocr_confidence": 0.85,
+
+    "//_group": "Applied to min(det) and min(ocr) ACROSS the frames of a vote.",
+    "//_group2": "min_group_confidence is the legacy single knob and applied one",
+    "//_group3": "number to BOTH scores while sitting behind much looser",
+    "//_group4": "per-frame floors (app_detect_min 0.50 / app_ocr_min 0.75).",
+    "//_group5": "That asymmetry ate reads invisibly: a frame cleared the",
+    "//_group6": "per-frame gate at ocr 0.76, joined a bucket, found agreeing",
+    "//_group7": "frames, then got re-judged at 0.80 and dropped.",
+    "//_group8": "Measured on dtfootagefinal, 20 hand-labelled plated cars:",
+    "//_group9": "  group 0.80/0.80 + 2 frames -> 15/20 cars, 2 ambiguous",
+    "//_group10": "  group 0.50/0.75 + 2 frames -> 20/20 cars, 4 ambiguous",
+    "//_group11": "  group 0.50/0.75 + 3 frames -> 20/20 cars, 1 ambiguous",
+    "//_group12": "The third agreeing frame is what buys back the precision:",
+    "//_group13": "three independent frames reading the IDENTICAL string beats",
+    "//_group14": "a higher score on two. Explicit group floors are honored",
+    "//_group15": "and logged when stricter; check failed_group_floor telemetry.",
+    "//_group_pr": "PLATE RECOGNIZER values below. The paragraph above is the",
+    "//_group_pr2": "ultimateALPR history and is kept because the reasoning still",
+    "//_group_pr3": "applies - but its NUMBERS do not transfer. Group floors match",
+    "//_group_pr4": "the current per-frame gates (0.70/0.80). Raising the OCR floor to 0.95",
+    "//_group_pr5": "removed a no-plate-confirms-as-customer case on test footage,",
+    "//_group_pr6": "but at LJS it dropped real plates scored 0.87-0.94 exactly",
+    "//_group_pr7": "right - 94% -> 76% confirm rate. Case mix, not calibration.",
+    "//_group_pr8": "DAY ONE: if no-plate confirms appear, raise ONLY this OCR",
+    "//_group_pr9": "floor, to 0.90 before 0.95. Do not touch the fast path.",
+    "min_group_confidence": 0.8,
+    "min_group_detection_confidence": 0.70,
+    "min_group_ocr_confidence": 0.80,
+
+    "//_vote": "Frames that must independently read the IDENTICAL normalized",
+    "//_vote2": "string. 2 for pr_stream (LJS eval: 165/176 confirmable); the",
+    "//_vote3": "3-frame setting above was tuned for ultimateALPR's clip.",
+    "//_vote4": "MUST match presence.vote_min_frames - that key OVERRIDES this",
+    "//_vote5": "one, and setting only this side is a documented way to lose a",
+    "//_vote6": "validation run. high_ocr_single_frame: when >0, one frame at or",
+    "//_vote7": "above it confirms immediately without waiting for agreement.",
+    "//_vote8": "0.99 on PR's scale (was 0.95). The new LJS angle produces many",
+    "//_vote9": "frames, so 0.95-0.98 first hits wait for a second agreeing",
+    "//_vote10": "read instead of locking an early twin. 0.99+ single glimpses",
+    "//_vote11": "still confirm. Do not disable: some cars produce one read.",
+    "vote_min_frames": 2,
+    "high_ocr_single_frame": 0.99,
+    "vote_window_seconds": 3.0,
+    "min_normalized_length": 3,
+    "max_normalized_length": 12
+  },
+
+  "behavior": {
+    "//cooldown": "Revisit policy (a RETURNING customer), distinct from presence.dedup.",
+    "cooldown_seconds": 600,
+    "//pace": "Legacy compatibility value; runtime pacing is capture.target_fps.",
+    "//pace_2": "At 5 fps the loop budget is 200ms. Field-test temperature and",
+    "//pace_3": "throttling on each hardware/cooling combination before raising fps.",
+    "capture_interval_ms": 200,
+    "queue_max_size": 1000,
+    "queue_ttl_hours": 24,
+    "heartbeat_interval_seconds": 120,
+    "cooldown_prune_interval_seconds": 60
+  },
+
+  "detection_zone": {
+    "//": "Full-left plate-identity eligibility region. The corrected camera view",
+    "//_2": "can place a valid plate against the left boundary; y_max still excludes",
+    "//_3": "the near-field bottom band. The ordered route can exclude cross",
+    "//_4": "traffic only after shadow validation and promotion; it does not",
+    "//_5": "protect this live plate gate while shadowed. Images stay full-frame.",
+    "enabled": true,
+    "x_min_pct": 0.0,
+    "x_max_pct": 1.0,
+    "y_min_pct": 0.0,
+    "y_max_pct": 0.75
+  },
+
+  "camera": {
+    "resolution_width": 1456,
+    "resolution_height": 1088,
+    "framerate": 15
+  },
+
+  "telemetry": {
+    "include_tailscale": true,
+    "include_cellular": true,
+    "save_zone_preview_on_boot": true
+  },
+
+  "hours": {
+    "//": "Local open window. Outside it we still heartbeat but /visit and",
+    "//_2": "/detection-event are not sent. MediaMTX+Stream stop at close and",
+    "//_3": "start warmup_minutes before open. Omit this block to stay",
+    "//_4": "always-open with capture unmanaged.",
+    "//_ljs": "Long John Silver's Louisville: 10am–10pm Eastern, capture 09:45–22:00.",
+    "timezone": "America/New_York",
+    "open": "10:00",
+    "close": "22:00",
+    "warmup_minutes": 15
+  }
+}

@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Reconcile MediaMTX + Plate Recognizer Stream with the location's open hours.
+#
+# Sites without a config.json `hours` block are left alone. When hours are
+# set, capture runs from (open - warmup_minutes) until close, then stops.
+# plate-reader, Tailscale, and the heartbeat stay up either way.
+#
+# Stop order: Stream, then MediaMTX (so Stream is not reading a dying feed).
+# Start order: MediaMTX, wait for RTSP, then Stream (libcamera is one-consumer).
+#
+# Invoked every minute by serv-capture-hours.timer. Idempotent: already-correct
+# state is a silent no-op so the journal is not a per-minute heartbeat.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+CONFIG="${SERV_CAPTURE_CONFIG:-/home/serv/plate_reader/config.json}"
+CODE_ROOT="${SERV_CAPTURE_CODE:-/opt/serv}"
+STREAM_CONTAINER="${SERV_CAPTURE_STREAM:-stream}"
+MTX_UNIT="${SERV_CAPTURE_MTX:-mediamtx.service}"
+RUN_STREAM="${SERV_CAPTURE_RUN_STREAM:-/home/serv/stream/run_stream.sh}"
+RTSP_HOST="${SERV_CAPTURE_RTSP_HOST:-127.0.0.1}"
+RTSP_PORT="${SERV_CAPTURE_RTSP_PORT:-8554}"
+DRY_RUN="${SERV_CAPTURE_DRY_RUN:-0}"
+
+log() { logger -t serv-capture-hours -- "$*"; echo "$*"; }
+
+desired_state() {
+    PYTHONPATH="$CODE_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+        SERV_CAPTURE_CONFIG="$CONFIG" \
+        python3 -c '
+from pathlib import Path
+import os
+from plate_reader.config import capture_desired_state
+print(capture_desired_state(Path(os.environ["SERV_CAPTURE_CONFIG"])))
+'
+}
+
+mtx_active() { systemctl is-active --quiet "$MTX_UNIT"; }
+
+stream_running() {
+    local state
+    state="$(docker inspect -f '{{.State.Running}}' "$STREAM_CONTAINER" 2>/dev/null || true)"
+    [[ "$state" == "true" ]]
+}
+
+stream_exists() {
+    docker inspect "$STREAM_CONTAINER" >/dev/null 2>&1
+}
+
+wait_for_rtsp() {
+    local i
+    for i in $(seq 1 20); do
+        if python3 -c "
+import socket, sys
+try:
+    s = socket.create_connection(('${RTSP_HOST}', int('${RTSP_PORT}')), 1)
+    s.close()
+except OSError:
+    sys.exit(1)
+"; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    log "MediaMTX did not bind ${RTSP_HOST}:${RTSP_PORT}"
+    return 1
+}
+
+run() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        log "dry-run: $*"
+        return 0
+    fi
+    "$@"
+}
+
+stop_capture() {
+    if stream_exists; then
+        run docker update --restart=no "$STREAM_CONTAINER" >/dev/null || true
+        if stream_running || [[ "$DRY_RUN" == "1" ]]; then
+            log "stopping Stream container ${STREAM_CONTAINER}"
+            run docker stop -t 20 "$STREAM_CONTAINER" >/dev/null || true
+        fi
+    fi
+    if mtx_active || [[ "$DRY_RUN" == "1" ]]; then
+        log "stopping ${MTX_UNIT}"
+        run systemctl stop "$MTX_UNIT"
+    fi
+}
+
+start_stream() {
+    if stream_exists; then
+        run docker update --restart=unless-stopped "$STREAM_CONTAINER" >/dev/null
+        run docker start "$STREAM_CONTAINER" >/dev/null
+        return 0
+    fi
+    if [[ ! -x "$RUN_STREAM" ]]; then
+        log "Stream container missing and ${RUN_STREAM} is not executable"
+        return 1
+    fi
+    log "Stream container missing; creating it via ${RUN_STREAM} (no pull)"
+    run runuser -u serv -- env SKIP_PULL=1 "$RUN_STREAM"
+}
+
+start_capture() {
+    if ! mtx_active; then
+        log "starting ${MTX_UNIT}"
+        run systemctl start "$MTX_UNIT"
+    fi
+    if [[ "$DRY_RUN" != "1" ]]; then
+        wait_for_rtsp
+    fi
+    if ! stream_running; then
+        log "starting Stream container ${STREAM_CONTAINER}"
+        start_stream
+    fi
+}
+
+if [[ ! -f "$CONFIG" ]]; then
+    log "no config at ${CONFIG}; leaving capture alone"
+    exit 1
+fi
+
+desired="$(desired_state)" || {
+    log "could not read hours from ${CONFIG}; leaving capture alone"
+    exit 1
+}
+
+case "$desired" in
+    unmanaged)
+        exit 0
+        ;;
+    on)
+        if mtx_active && stream_running; then
+            exit 0
+        fi
+        start_capture
+        ;;
+    off)
+        if ! mtx_active && ! stream_running; then
+            exit 0
+        fi
+        stop_capture
+        ;;
+    *)
+        log "unknown desired state ${desired}; leaving capture alone"
+        exit 1
+        ;;
+esac

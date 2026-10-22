@@ -1,0 +1,47 @@
+# ultimateALPR dev/test container — PERMANENT infrastructure, not a workaround.
+#
+# Doubango ships no macOS build and none is planned, so `import ultimateAlprSdk`
+# can never work from host Python on a Mac. Any ualpr harness run happens here.
+#
+# Native linux/arm64. Do NOT add --platform=linux/amd64: the x86_64 SDK binaries
+# use AVX/AVX-512 and die with SIGILL under QEMU on Apple Silicon. The aarch64
+# binaries run natively under Docker's arm64 VM. Same binary family as the Pi 5
+# target (64-bit Raspberry Pi OS), so this is a faithful dev surface.
+# binaries/raspbian/ is 32-bit armv7l and is WRONG for Pi 5.
+#
+# Build:
+#   docker build -f docker/Dockerfile.ualpr -t serv-ualpr .
+#
+# Run (see docker/README.md for the full invocation):
+#   docker run --rm \
+#     -v /path/to/ultimateALPR-SDK:/sdk \
+#     -v "$PWD":/work -w /work \
+#     serv-ualpr bash
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# cython3 is required by the SDK's setup.py (Cython.Distutils.build_ext).
+# build-essential provides the g++ that compiles the SWIG extension.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-dev python3-pip \
+        cython3 \
+        build-essential \
+        ca-certificates \
+        file \
+    && rm -rf /var/lib/apt/lists/*
+
+# opencv for frame decode in the harness; numpy for frame buffers.
+RUN pip3 install --no-cache-dir opencv-python-headless numpy
+
+# Both paths are needed: the arch dir holds libultimate_alpr-sdk.so (and the
+# built _ultimateAlprSdk.so), python/ holds the pure-python wrapper.
+ENV LD_LIBRARY_PATH=/sdk/binaries/linux/aarch64:/sdk/python
+ENV PYTHONPATH=/sdk/binaries/linux/aarch64:/sdk/python:/work
+
+COPY docker/build_ualpr_binding.sh /usr/local/bin/build_ualpr_binding
+RUN chmod +x /usr/local/bin/build_ualpr_binding
+
+WORKDIR /work
+
+CMD ["bash"]

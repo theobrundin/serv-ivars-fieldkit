@@ -1,0 +1,40 @@
+[Unit]
+Description=Serv plate-reader auto-updater (git pull + redeploy)
+# Don't bother if there's no network yet; the timer will fire again later.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root: needs systemctl + write access to the deploy dir.
+# update.sh drops to the 'serv' user for git operations itself.
+#
+# Invoked via `bash` deliberately, NOT as a bare path. Git records the
+# executable bit, and files uploaded through GitHub's web UI arrive as mode
+# 644 — so a bare ExecStart path would fail with "permission denied" on every
+# unit. Calling bash explicitly makes this immune to how the repo was updated.
+# Run the root-owned installed copy. Never execute an updater from the
+# serv-writable checkout: a compromised camera process could edit it and wait
+# for the nightly root timer.
+ExecStart=/usr/local/sbin/serv-update
+# Hard ceiling so a wedged network or hung restart can't run forever.
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+
+UMask=0077
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+# No [Install] section — triggered by serv-update.timer, not enabled alone.

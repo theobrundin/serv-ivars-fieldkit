@@ -1,0 +1,24 @@
+[Unit]
+Description=Check for and apply serv-pi updates during the overnight close window
+
+[Timer]
+# Run once a night, after THIS location closes. Time is LOCAL to the Pi's
+# clock, so set the unit's timezone during bringup:
+#   sudo timedatectl set-timezone America/New_York   (use the store's zone)
+#
+# Set per location to (closing time + ~30-60 min buffer). 01:00 is a safe
+# default: after close for essentially all QSR drive-thrus, with runway
+# before an early coffee open.
+OnCalendar=*-*-* 01:00:00
+
+# Jitter so a growing fleet doesn't hit GitHub + the cloud at the same second.
+RandomizedDelaySec=10min
+
+# Persistent is intentionally OFF. If it were on, a unit powered off at 01:00
+# would "catch up" by running the update — and restarting the camera —
+# whenever it next boots, e.g. at noon during a lunch rush. A missed night
+# just waits for the next one.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

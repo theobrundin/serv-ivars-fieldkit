@@ -1,0 +1,22 @@
+[Unit]
+Description=Serv network route priority (cellular > ethernet)
+# Run after NetworkManager (which manages eth0) and after network is online.
+# Ordered before plate-reader so routing is settled before any HTTP calls.
+After=NetworkManager.service network-online.target
+Wants=network-online.target
+Before=plate-reader.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/network-priority.sh
+# RemainAfterExit so `systemctl status network-priority` reflects the last
+# configuration state instead of always showing "inactive (dead)" after
+# the oneshot completes.
+RemainAfterExit=yes
+# Ephemeral start failures shouldn't crash-loop — the dispatcher hook
+# and cellular-connect.sh will reconverge on the correct routing anyway.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

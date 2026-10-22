@@ -1,0 +1,38 @@
+[Unit]
+Description=MediaMTX RTSP bridge (Pi CSI camera -> rtsp://127.0.0.1:8554/cam)
+After=network-online.target
+Wants=network-online.target
+# Stream cannot do anything without this feed, so it is ordered after us.
+Before=pr-stream.service
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
+Restart=always
+RestartSec=5
+
+# Needs the video group for /dev/video* and the CSI stack. Deliberately NOT
+# root: this mirrors the least-privilege posture SECURITY.md sets for the
+# plate reader itself.
+User=serv
+Group=video
+SupplementaryGroups=video render
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run
+# MediaMTX writes MoQ TLS material at startup; with ProtectSystem=strict and
+# no writable cwd it logs "read-only file system" and exits. moq:no in the
+# config removes the need, but give it a real runtime dir regardless.
+RuntimeDirectory=mediamtx
+WorkingDirectory=/run/mediamtx
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# Loopback only; no reason for this process to reach the network.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

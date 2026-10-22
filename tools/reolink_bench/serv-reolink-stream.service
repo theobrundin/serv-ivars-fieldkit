@@ -1,0 +1,23 @@
+[Unit]
+Description=Plate Recognizer Stream for the home Reolink bench
+After=docker.service serv-reolink-monitor-guard.service serv-reolink-app.service serv-reolink-dhcp.service
+Requires=docker.service serv-reolink-monitor-guard.service
+Wants=serv-reolink-app.service serv-reolink-dhcp.service
+ConditionHost=servTest
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/docker run --rm --name serv-reolink-stream --network host --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --memory 2800m --memory-swap 3300m --env-file /home/serv/reolink-bench/pr-stream.env --env OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp --log-driver local --log-opt max-size=2m --log-opt max-file=2 --volume /home/serv/reolink-bench/stream:/user-data platerecognizer/alpr-stream@sha256:b3acfbd966127bfc78869ccd46ed68bc4d93d674909c32f97bdc6f4da1422b24
+ExecStop=-/usr/bin/docker stop -t 20 serv-reolink-stream
+Restart=always
+RestartSec=15
+TimeoutStopSec=40
+# Docker's bounded root-only log is the diagnostic source. Do not duplicate
+# vendor output into the shared journal: it can contain authenticated URLs.
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

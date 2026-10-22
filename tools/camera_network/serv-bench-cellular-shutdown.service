@@ -1,0 +1,16 @@
+[Unit]
+Description=Release the home-bench modem session during orderly shutdown
+After=NetworkManager.service systemd-resolved.service
+Before=serv-bench-cellular.service
+ConditionHost=servTest
+
+[Service]
+Type=oneshot
+ExecStart=/bin/true
+ExecStop=/usr/bin/python3 /opt/serv-bench-network/shutdown.py
+RemainAfterExit=yes
+TimeoutStopSec=90
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,56 @@
+# --- secrets -----------------------------------------------------------
+# Per-unit live credentials. NEVER commit. config.example.json IS committed.
+config.json
+*-identity.json
+/.serv-private/
+/ivars-staging/
+/field-private/
+
+# --- media / large artifacts -------------------------------------------
+*.mp4
+*.mov
+*.avi
+
+# --- python ------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# --- harness outputs ----------------------------------------------------
+# Regenerated on every `replay_harness.py video` run. Not source. They also
+# churn by thousands of lines between runs of IDENTICAL code, because
+# sub-threshold OCR reads are nondeterministic (multithreaded ONNX); tracking
+# them buries real diffs in noise.
+*_tracks_assoc.csv
+*_tracks_events.csv
+*.jsonl
+replay_*.jsonl
+records*.jsonl
+
+# Generated outputs and private ground truth can contain plate strings.
+/outputs/
+validation/*private*
+
+# Vehicle-labeler exports are local review data, never source. In particular,
+# the private files can contain manually transcribed plate text and notes.
+annotations.private.*
+annotations.safe.*
+.vehicle-labeler.lock
+
+# Locally generated change reports are delivery artifacts, not source.
+docs/Serv_Pi_*_Change_*.docx
+
+# --- runtime artifacts --------------------------------------------------
+zone_preview.jpg
+*.db
+*.sqlite
+*.sqlite3
+/var/log
+/var/log/
+*.log
+
+# --- os -----------------------------------------------------------------
+.DS_Store

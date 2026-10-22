@@ -1,0 +1,674 @@
+#!/usr/bin/env python3
+"""Single-owner bounded QMI recovery, without modem reset/reboot/firewall edits.
+
+Install root-owned as /usr/local/sbin/serv-cellular-supervisor. DNS_MODE=preserve
+does not edit Tailscale-managed resolvers. DNS_MODE=resolved requires an already
+provisioned systemd-resolved. Stopping/restarting preserves owned healthy sessions.
+"""
+from __future__ import annotations
+import argparse
+import dataclasses
+import fcntl
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import stat
+import subprocess
+import sys
+import time
+from urllib.parse import urlsplit
+
+
+class RecoveryError(Exception):
+    pass
+
+
+class Busy(RecoveryError):
+    pass
+
+
+class UnsafeDevice(RecoveryError):
+    pass
+
+
+class ConnectionPending(RecoveryError):
+    """Retryable readiness failure with no unknown retained WDS allocation."""
+
+
+@dataclasses.dataclass
+class Result:
+    code: int
+    out: str = ""
+    err: str = ""
+    timed_out: bool = False
+
+
+class Runner:
+    def run(self, args, timeout=10):
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+            env=dict(os.environ, PATH="/usr/sbin:/usr/bin:/sbin:/bin", LC_ALL="C"))
+        try:
+            out, err = process.communicate(timeout=timeout)
+            return Result(process.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                out, err = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                out, err = process.communicate()
+            return Result(124, out, err, timed_out=True)
+
+
+@dataclasses.dataclass
+class Config:
+    dev: str = "/dev/cdc-wdm0"
+    iface: str = "wwan0"
+    apn: str = "super"
+    runtime: str = "/run/serv-cellular"
+    qmi_lock: str = "/run/serv/qmi-control.lock"
+    sysfs: str = "/sys/class/net"
+    usbmisc: str = "/sys/class/usbmisc"
+    boot_id_file: str = "/proc/sys/kernel/random/boot_id"
+    wifi_only: str = "/home/serv/plate_reader/.wifi_only"
+    check_url: str = "https://sb13iibr7f.execute-api.us-east-1.amazonaws.com/heartbeat"
+    secondary_url: str = "https://controlplane.tailscale.com/"
+    dns_mode: str = "preserve"
+    preferred_metric: int = 50
+    probation_metric: int = 42760
+    failures: int = 3
+    successes: int = 2
+    check_interval: int = 30
+    retry_interval: int = 15
+    max_backoff: int = 300
+    qmi_timeout: int = 25
+
+    @classmethod
+    def environment(cls):
+        cfg = cls()
+        for env, field in {"DEV":"dev", "IFACE":"iface", "APN":"apn", "CHECK_URL":"check_url",
+                           "SECONDARY_CHECK_URL":"secondary_url", "DNS_MODE":"dns_mode"}.items():
+            if env in os.environ:
+                setattr(cfg, field, os.environ[env])
+        cfg.validate()
+        return cfg
+
+    def validate(self):
+        if not re.fullmatch(r"/dev/cdc-wdm[0-9]+", self.dev):
+            raise RecoveryError("DEV must identify one cdc-wdm modem")
+        if not re.fullmatch(r"wwan[0-9]{1,2}", self.iface):
+            raise RecoveryError("IFACE must identify one wwan interface, never LAN or Tailscale")
+        if not re.fullmatch(r"[a-zA-Z0-9.-]{1,100}", self.apn):
+            raise RecoveryError("invalid APN")
+        if self.dns_mode not in {"preserve", "resolved"}:
+            raise RecoveryError("DNS_MODE must be preserve or resolved")
+        for url in (self.check_url, self.secondary_url):
+            parsed = urlsplit(url)
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+                raise RecoveryError("probes require credential-free HTTPS URLs")
+
+
+def valid_ipv4(value):
+    ip = ipaddress.IPv4Address(value)
+    if ip.is_unspecified or ip.is_multicast or ip.is_loopback or ip == ipaddress.IPv4Address("255.255.255.255"):
+        raise ValueError("not usable unicast IPv4")
+    return str(ip)
+
+
+@dataclasses.dataclass
+class Settings:
+    address: str
+    prefix: int
+    gateway: str
+    dns: list[str]
+    mtu: int | None = None
+
+    @classmethod
+    def parse(cls, output):
+        def field(label, optional=False):
+            match = re.search(r"^\s*" + re.escape(label) + r":\s*'?([0-9.]+)'?\s*$", output, re.M)
+            if not match and not optional:
+                raise RecoveryError("incomplete modem IPv4 settings")
+            return match.group(1) if match else None
+        try:
+            address = valid_ipv4(field("IPv4 address"))
+            mask = field('IPv4 subnet mask')
+            mask_bits = f"{int(ipaddress.IPv4Address(mask)):032b}"
+            if not re.fullmatch(r"1+0*", mask_bits):
+                raise ValueError("noncontiguous or inverse subnet mask")
+            network = ipaddress.IPv4Network(f"{address}/{mask}", strict=False)
+            gateway = valid_ipv4(field("IPv4 gateway address"))
+            if network.prefixlen == 0 or address == gateway:
+                raise ValueError("invalid prefix/gateway")
+            # Raw-IP /32 bearers may legitimately report an off-prefix gateway.
+            # A normal subnet must contain both host and gateway addresses.
+            if network.prefixlen != 32 and ipaddress.IPv4Address(gateway) not in network:
+                raise ValueError("off-subnet gateway")
+            if network.prefixlen < 31 and ({ipaddress.IPv4Address(address), ipaddress.IPv4Address(gateway)} &
+                    {network.network_address, network.broadcast_address}):
+                raise ValueError("network/broadcast host or gateway")
+            dns = []
+            for label in ("IPv4 primary DNS", "IPv4 secondary DNS"):
+                value = field(label, True)
+                if value and value != "0.0.0.0":
+                    dns.append(valid_ipv4(value))
+            value = field("MTU", True)
+            mtu = int(value) if value else None
+            if mtu is not None and not 576 <= mtu <= 9000:
+                raise ValueError("bad MTU")
+            return cls(address, network.prefixlen, gateway, list(dict.fromkeys(dns)), mtu)
+        except (ValueError, TypeError) as exc:
+            raise RecoveryError("invalid modem IPv4 settings") from exc
+
+
+class Lock:
+    def __init__(self, path, wait=0):
+        self.path, self.wait, self.fd = path, wait, None
+
+    def __enter__(self):
+        self.fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        info = os.fstat(self.fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            os.close(self.fd)
+            self.fd = None
+            raise RecoveryError("unsafe lock file")
+        deadline = time.monotonic() + self.wait
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    os.close(self.fd)
+                    self.fd = None
+                    raise Busy("QMI or supervisor lock busy")
+                time.sleep(0.1)
+
+    def __exit__(self, *_):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+class Supervisor:
+    def __init__(self, cfg, runner=None):
+        self.cfg, self.runner = cfg, runner or Runner()
+        self.state = self.fingerprint = self.current_settings = None
+        self.failed = self.succeeded = self.attempts = 0
+        self.repaired = self.stopping = False
+        self.allocation_uncertain = False
+        self.configuration_ready = True
+        self.dns_warning = None
+        self.last_failure = None
+        self._cli_version = None
+
+    def log(self, message):
+        print(f"[cellular-connect] {message}", flush=True)
+
+    def command(self, args, timeout=10, required=True):
+        result = self.runner.run(args, timeout)
+        if required and result.code:
+            raise RecoveryError(f"{Path(args[0]).name} failed (exit {result.code})")
+        return result
+
+    def qmi(self, option, cid=None, retain=True):
+        args = ["/usr/bin/qmicli", "-p", "-d", self.cfg.dev, option]
+        if option.startswith("--wds-start-network="):
+            args.append("--device-open-net=net-raw-ip|net-no-qos-header")
+        if cid is not None:
+            args.append(f"--client-cid={cid}")
+        if retain:
+            args.append("--client-no-release-cid")
+        with Lock(self.cfg.qmi_lock, wait=2):
+            return self.command(args, self.cfg.qmi_timeout, required=False)
+
+    def atomic_json(self, name, data):
+        path = Path(self.cfg.runtime) / name
+        temp = path.with_name(path.name + f".{os.getpid()}.tmp")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                json.dump(data, stream, sort_keys=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    def status(self, stage, **extra):
+        self.atomic_json("status.json", {"version":1, "updated_at":time.time(), "stage":stage,
+            "owned_session":bool(self.state and self.state.get("pdh")),
+            "consecutive_failures":self.failed, "connection_attempts":self.attempts,
+            "dns_mode":self.cfg.dns_mode, "dns_warning":self.dns_warning,
+            "last_failure":self.last_failure, **extra})
+
+    def record_failure(self, phase, result, classification):
+        # Only fixed categories/codes go into status or logs. Detailed QMI
+        # output remains one bounded, atomic mode-0600 file in root's runtime.
+        self.last_failure = {"phase":phase, "code":result.code,
+                             "classification":classification,
+                             "timed_out":result.timed_out or result.code == 124}
+        def bounded(value):
+            return value.encode("utf-8", errors="replace")[:4096].decode("utf-8", errors="ignore")
+        self.atomic_json("last-failure.json", {"version":1, "updated_at":time.time(),
+            "fingerprint":self.fingerprint, **self.last_failure,
+            "stdout":bounded(result.out), "stderr":bounded(result.err)})
+
+    def require_control_ready(self):
+        # Generic CTL action: qmicli 1.36.0 bypasses device_allocate_client().
+        # A USB node alone can appear before QMI responds after a cold boot.
+        # Never use SYNC here: it may invalidate other clients/owned sessions.
+        result = self.qmi("--get-service-version-info", retain=False)
+        version = re.search(r"^\s*wds\s+\(([0-9]{1,5})\.([0-9]{1,5})\)\s*$", result.out, re.M)
+        if result.code:
+            category = "control_query_timeout" if result.timed_out or result.code == 124 else "control_query_failed"
+        elif not version or not (1 <= int(version[1]) <= 65535 and int(version[2]) <= 65535):
+            category = "wds_service_not_ready"
+        else:
+            return
+        self.record_failure("readiness", result, category)
+        raise ConnectionPending("modem control readiness pending; retrying without retained WDS allocation")
+
+    def cli_version(self):
+        if self._cli_version is None:
+            self._cli_version = ""
+            try:
+                result = self.command(["/usr/bin/qmicli", "--version"], timeout=5, required=False)
+                version = re.search(r"^qmicli ([0-9]+\.[0-9]+\.[0-9]+)$", result.out, re.M)
+                if result.code == 0 and version:
+                    self._cli_version = version[1]
+            except OSError:
+                pass
+        return self._cli_version
+
+    @staticmethod
+    def failed_before_allocation(result, cli_version=""):
+        # Exact qmicli 1.36.0 device_new_ready()/device_open_ready() failures
+        # exit BEFORE device_allocate_client(). An allocation error, generic
+        # timeout, signal, or unknown failure is NOT proof that no CID exists.
+        # Source: libqmi/1.36.0/src/qmicli/qmicli.c (upstream tag).
+        # Unexpected stdout/additional error lines could indicate a different
+        # failure phase. Do not broaden this allowlist without source review.
+        return (cli_version == "1.36.0" and result.code == 1 and not result.timed_out and
+                not result.out.strip() and
+                re.fullmatch(r"error: couldn't (?:create QmiDevice|open the QmiDevice): [^\r\n]+\n?",
+                             result.err) is not None)
+
+    def persist(self):
+        if self.state is None:
+            (Path(self.cfg.runtime) / "session.json").unlink(missing_ok=True)
+        else:
+            self.atomic_json("session.json", self.state)
+
+    def modem_fingerprint(self):
+        device, interface = Path(self.cfg.dev), Path(self.cfg.sysfs) / self.cfg.iface
+        if not device.exists() or not interface.exists():
+            return None
+        control_device = Path(self.cfg.usbmisc) / device.name / "device"
+        network_device = interface / "device"
+        if (not (interface / "qmi/raw_ip").exists() or not control_device.exists()
+                or not network_device.exists() or control_device.resolve() != network_device.resolve()):
+            raise UnsafeDevice("QMI control device and WWAN interface do not match; refusing network changes")
+        details = device.stat()
+        return {"boot_id":Path(self.cfg.boot_id_file).read_text().strip(), "device":self.cfg.dev,
+                "device_ctime_ns":details.st_ctime_ns, "device_rdev":details.st_rdev,
+                "interface_index":(interface / "ifindex").read_text().strip()}
+
+    def restore(self, fingerprint):
+        uncertain = Path(self.cfg.runtime) / "allocation-uncertain.json"
+        if uncertain.exists():
+            try:
+                if uncertain.is_symlink() or uncertain.stat().st_mode & 0o077:
+                    raise ValueError("unsafe uncertain state")
+                self.allocation_uncertain = json.loads(uncertain.read_text())["fingerprint"] == fingerprint
+            except (ValueError, KeyError, TypeError, OSError):
+                # Cannot safely disprove a previous allocation when state is bad.
+                self.allocation_uncertain = True
+            if not self.allocation_uncertain:
+                uncertain.unlink()
+        path = Path(self.cfg.runtime) / "session.json"
+        if not path.exists():
+            return
+        try:
+            if path.is_symlink() or path.stat().st_mode & 0o077:
+                raise ValueError("unsafe state")
+            state = json.loads(path.read_text())
+            if state["fingerprint"] != fingerprint:
+                raise ValueError("new boot/modem")
+            if type(state["cid"]) is not int or not 1 <= state["cid"] <= 254:
+                raise ValueError("invalid client")
+            pdh = state.get("pdh")
+            if pdh is not None and (type(pdh) is not int or not 1 <= pdh <= 4294967295):
+                raise ValueError("invalid handle")
+            self.state = state
+        except (ValueError, KeyError, TypeError, OSError):
+            self.log("discarding invalid/stale local ownership; no stale CID used")
+            self.state = None
+            self.persist()
+
+    def ip(self, *args, required=True):
+        return self.command(["/usr/bin/ip", "-4", *args], required=required)
+
+    def addresses(self):
+        result = self.ip("-j", "addr", "show", "dev", self.cfg.iface, required=False)
+        if result.code:
+            return []
+        try:
+            return [a for link in json.loads(result.out) for a in link.get("addr_info", []) if a.get("family") == "inet"]
+        except (ValueError, TypeError):
+            raise RecoveryError("invalid ip address output")
+
+    def withdraw_routes(self):
+        # Only defaults on the explicitly owned cellular interface in main.
+        # No other interface, table, policy rule, or firewall is changed.
+        self.ip("route", "flush", "table", "main", "default", "dev", self.cfg.iface)
+
+    def route(self, metric):
+        if self.current_settings is None:
+            raise RecoveryError("no validated settings for route")
+        self.ip("route", "replace", "default", "via", self.current_settings.gateway,
+                "dev", self.cfg.iface, "onlink", "metric", str(metric), "proto", "static")
+
+    def promote(self):
+        self.route(self.cfg.preferred_metric)
+        self.ip("route", "del", "default", "dev", self.cfg.iface,
+                "metric", str(self.cfg.probation_metric), required=False)
+
+    def set_dns(self, settings):
+        if self.cfg.dns_mode == "preserve":
+            self.dns_warning = "externally_managed_verify_cellular_only_cold_boot"
+            return
+        if not settings.dns:
+            raise RecoveryError("modem supplied no usable DNS servers")
+        self.command(["/usr/bin/systemctl", "is-active", "--quiet", "systemd-resolved.service"])
+        self.command(["/usr/bin/resolvectl", "dns", self.cfg.iface, *settings.dns])
+        self.command(["/usr/bin/resolvectl", "default-route", self.cfg.iface, "yes"])
+        self.dns_warning = None
+
+    def apply(self, settings):
+        self.configuration_ready = False
+        self.withdraw_routes()
+        self.current_settings = settings
+        self.command(["/usr/bin/ip", "link", "set", self.cfg.iface, "up"])
+        if settings.mtu is not None:
+            self.command(["/usr/bin/ip", "link", "set", self.cfg.iface, "mtu", str(settings.mtu)])
+        wanted = f"{settings.address}/{settings.prefix}"
+        self.ip("addr", "replace", wanted, "dev", self.cfg.iface)
+        for address in self.addresses():
+            old = f"{address['local']}/{address['prefixlen']}"
+            if old != wanted:
+                self.ip("addr", "del", old, "dev", self.cfg.iface)
+        self.route(self.cfg.probation_metric)
+        self.set_dns(settings)
+        self.configuration_ready = True
+        self.succeeded = 0
+
+    def probe(self):
+        codes = []
+        for url in (self.cfg.check_url, self.cfg.secondary_url):
+            result = self.command(["/usr/bin/curl", "-4", "--interface", f"if!{self.cfg.iface}",
+                "--noproxy", "*", "--proto", "=https", "--silent", "--show-error", "--output", "/dev/null",
+                "--write-out", "%{http_code}", "--connect-timeout", "5", "--max-time", "8", url],
+                timeout=10, required=False)
+            codes.append(result.code)
+            # 403/404/500 proves TLS/HTTP transport, not successful app ingest.
+            if result.code == 0 and re.fullmatch(r"[1-5][0-9]{2}", result.out.strip()):
+                return {"ok":True, "primary_transport":len(codes) == 1, "dns_failed":False}
+        return {"ok":False, "primary_transport":False, "dns_failed":all(c == 6 for c in codes)}
+
+    def get_settings(self):
+        result = self.qmi("--wds-get-current-settings", self.state["cid"])
+        if result.code:
+            raise RecoveryError(f"owned session settings unavailable (exit {result.code})")
+        return Settings.parse(result.out)
+
+    def cleanup(self):
+        self.withdraw_routes()
+        if self.state is None:
+            return True
+        cid, pdh = self.state["cid"], self.state.get("pdh")
+        if pdh is not None:
+            stopped = self.qmi(f"--wds-stop-network={pdh}", cid)
+            if stopped.code:
+                if "InvalidClientId" in stopped.out + stopped.err:
+                    # Modem reset its client table without USB re-enumeration.
+                    self.state = self.current_settings = None
+                    self.persist()
+                    return True
+                current = self.qmi("--wds-get-packet-service-status", cid)
+                if current.code or not re.search(r"Connection status:\s*'disconnected'", current.out):
+                    self.log(f"owned stop failed (exit {stopped.code}); retaining ownership for retry")
+                    return False
+            self.state["pdh"] = None
+            self.persist()
+        released = self.qmi("--wds-noop", cid, retain=False)
+        if released.code and "InvalidClientId" not in released.out + released.err:
+            self.log(f"owned release failed (exit {released.code}); retrying without new allocation")
+            return False
+        if self.current_settings:
+            self.ip("addr", "del", f"{self.current_settings.address}/{self.current_settings.prefix}",
+                    "dev", self.cfg.iface, required=False)
+        self.state = self.current_settings = None
+        self.persist()
+        self.repaired = False
+        if self.cfg.dns_mode == "resolved":
+            self.command(["/usr/bin/resolvectl", "revert", self.cfg.iface], required=False)
+        return True
+
+    def connect(self):
+        self.attempts += 1
+        self.require_control_ready()
+        raw = Path(self.cfg.sysfs) / self.cfg.iface / "qmi/raw_ip"
+        if raw.read_text().strip() != "Y":
+            self.command(["/usr/bin/ip", "link", "set", self.cfg.iface, "down"])
+            raw.write_text("Y\n")
+            if raw.read_text().strip() != "Y":
+                raise RecoveryError("raw-IP configuration did not persist")
+        self.command(["/usr/bin/ip", "link", "set", self.cfg.iface, "up"])
+        # Allocate first: if start hangs we still know which client to release.
+        allocation = self.qmi("--wds-noop")
+        match = re.search(r"\bCID:\s*'?(\d+)'?", allocation.out)
+        if not match or not 1 <= int(match.group(1)) <= 254:
+            if not match and self.failed_before_allocation(allocation, self.cli_version()):
+                self.record_failure("allocation", allocation, "failed_before_allocation")
+                raise ConnectionPending("QMI device open failed before WDS allocation; retrying")
+            # A timeout may allocate a CID before output arrives. Without it we
+            # cannot release safely; repeated blind allocations exhaust clients.
+            self.allocation_uncertain = True
+            self.atomic_json("allocation-uncertain.json", {"fingerprint":self.fingerprint})
+            self.record_failure("allocation", allocation, "unknown_cid_allocation_uncertain")
+            raise RecoveryError("WDS allocation uncertain; paused until modem generation changes or operator recovery")
+        self.state = {"version":1, "fingerprint":self.fingerprint, "cid":int(match.group(1)), "pdh":None}
+        self.persist()
+        if allocation.code:
+            self.record_failure("allocation", allocation, "known_cid_allocation_error")
+            raise RecoveryError("WDS allocation returned an error; known CID retained for cleanup")
+        result = self.qmi(f"--wds-start-network=apn={self.cfg.apn},ip-type=4", self.state["cid"])
+        match = re.search(r"Packet data handle:\s*'?(\d+)'?", result.out)
+        if match and 1 <= int(match.group(1)) <= 4294967295:
+            # A timeout can still contain a successful start's handle. Persist
+            # it before testing exit status so cleanup uses the real handle.
+            self.state["pdh"] = int(match.group(1))
+            self.persist()
+        if result.code or self.state["pdh"] is None:
+            self.record_failure("start", result,
+                                "known_pdh_start_error" if self.state["pdh"] else "missing_pdh_start_error")
+            raise RecoveryError(f"QMI start failed (exit {result.code}); exact CID retained for cleanup")
+        self.apply(self.get_settings())
+        self.status("probation")
+
+    def step(self):
+        if Path(self.cfg.wifi_only).exists():
+            self.status("disabled_wifi_only")
+            return self.cfg.max_backoff
+        fingerprint = self.modem_fingerprint()
+        if fingerprint is None:
+            self.state = self.fingerprint = self.current_settings = None
+            self.persist()
+            self.status("modem_absent")
+            return self.cfg.retry_interval
+        if self.fingerprint != fingerprint:
+            self.fingerprint, self.state, self.current_settings = fingerprint, None, None
+            self.failed = self.succeeded = 0
+            self.repaired = False
+            self.allocation_uncertain = False
+            self.restore(fingerprint)
+        if self.allocation_uncertain:
+            self.status("allocation_uncertain_operator_recovery_required")
+            return self.cfg.max_backoff
+        if self.state is not None and self.state.get("pdh") is None:
+            if not self.cleanup():
+                self.status("cleanup_pending")
+                return self.cfg.max_backoff
+        if self.addresses():
+            health = self.probe()
+            if health["ok"]:
+                self.failed = self.attempts = 0
+                self.repaired = False
+                self.succeeded += 1
+                if self.state and self.current_settings is None:
+                    try:
+                        self.current_settings = self.get_settings()
+                    except Busy:
+                        raise
+                    except RecoveryError:
+                        # A good HTTPS data path must not be torn down because
+                        # a restored session's control metadata cannot be read.
+                        self.status("connected_ownership_unverified",
+                                    primary_https_transport=health["primary_transport"])
+                        return self.cfg.check_interval
+                if self.state and not self.configuration_ready:
+                    self.apply(self.current_settings)
+                    self.status("host_configuration_repaired")
+                    return self.cfg.retry_interval
+                if self.state and self.succeeded >= self.cfg.successes:
+                    self.promote()
+                self.status("connected" if self.state else "connected_legacy_unowned",
+                            primary_https_transport=health["primary_transport"])
+                return self.cfg.check_interval
+            self.succeeded = 0
+            self.failed += 1
+            if self.failed < self.cfg.failures:
+                self.status("suspect", dns_failure=health["dns_failed"])
+                return self.cfg.check_interval
+            self.withdraw_routes()
+            if health["dns_failed"] and self.state:
+                # A DNS failure isn't proof the PDP session needs destruction.
+                self.apply(self.get_settings())
+                self.status("dns_unhealthy_session_preserved")
+                return self.cfg.check_interval
+            if self.state and not self.repaired:
+                self.repaired = True
+                try:
+                    self.apply(self.get_settings())
+                    self.status("host_configuration_repaired")
+                    return self.cfg.retry_interval
+                except Busy:
+                    self.repaired = False
+                    raise
+                except RecoveryError:
+                    self.log("host repair failed; proceeding to owned-session cleanup")
+        elif self.state and not self.repaired:
+            self.repaired = True
+            try:
+                self.apply(self.get_settings())
+                self.status("missing_host_address_repaired")
+                return self.cfg.retry_interval
+            except Busy:
+                self.repaired = False
+                raise
+            except RecoveryError:
+                self.log("missing-address repair failed; proceeding to owned-session cleanup")
+        if not self.cleanup():
+            self.status("cleanup_pending")
+            return self.cfg.max_backoff
+        try:
+            self.connect()
+            self.failed = 0
+            return self.cfg.retry_interval
+        except Busy:
+            raise
+        except ConnectionPending as exc:
+            self.log(str(exc))
+            self.status("modem_readiness_pending")
+            return min(self.cfg.max_backoff, self.cfg.retry_interval * 2 ** min(self.attempts, 5))
+        except (RecoveryError, OSError) as exc:
+            self.log(str(exc))
+            self.withdraw_routes()
+            if self.state and self.state.get("pdh") and self.current_settings:
+                self.status("host_configuration_failed_session_preserved")
+            else:
+                self.cleanup()
+                self.status("connect_failed")
+            return min(self.cfg.max_backoff, self.cfg.retry_interval * 2 ** min(self.attempts, 5))
+
+    def run(self):
+        while not self.stopping:
+            try:
+                delay = self.step()
+            except Busy:
+                self.status("qmi_busy_retrying")
+                delay = 5
+            except UnsafeDevice:
+                self.status("unsafe_device_association_no_network_changes")
+                delay = self.cfg.max_backoff
+            except (RecoveryError, OSError, ValueError) as exc:
+                self.log(str(exc))
+                try:
+                    self.withdraw_routes()
+                except (RecoveryError, OSError):
+                    pass
+                self.status("recovery_error", error_type=type(exc).__name__)
+                delay = self.cfg.max_backoff
+            end = time.monotonic() + delay
+            while not self.stopping and time.monotonic() < end:
+                time.sleep(max(0, min(1, end - time.monotonic())))
+        self.status("supervisor_stopped_session_preserved")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-config", action="store_true")
+    args = parser.parse_args()
+    cfg = Config.environment()
+    if args.check_config:
+        print(f"configuration valid; DNS_MODE={cfg.dns_mode}; no network changes made")
+        return 0
+    if os.geteuid() != 0:
+        raise RecoveryError("run as root through systemd")
+    runtime = Path(cfg.runtime)
+    runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if runtime.is_symlink() or runtime.stat().st_uid != 0 or runtime.stat().st_mode & 0o022:
+        raise RecoveryError("unsafe runtime directory")
+    Path(cfg.qmi_lock).parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    supervisor = Supervisor(cfg)
+    with Lock(str(runtime / "supervisor.lock")):
+        result = supervisor.command(["/usr/bin/systemctl", "is-active", "--quiet", "ModemManager.service"], required=False)
+        if result.code == 0:
+            raise RecoveryError("ModemManager active; refusing a competing cellular owner")
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, lambda *_: setattr(supervisor, "stopping", True))
+        supervisor.log("starting bounded QMI supervisor; stops preserve owned sessions")
+        if cfg.dns_mode == "preserve":
+            supervisor.dns_warning = "externally_managed_verify_cellular_only_cold_boot"
+            supervisor.log("DNS externally managed; verify cellular-only cold boot before shipping")
+        supervisor.run()
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (RecoveryError, OSError) as exc:
+        print(f"[cellular-connect] {exc}", file=sys.stderr)
+        sys.exit(1)

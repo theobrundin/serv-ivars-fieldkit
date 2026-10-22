@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Capture read-only modem telemetry for the unprivileged camera process.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+if [[ ! -d /run/serv ]]; then
+  echo "/run/serv is missing; run this collector through systemd" >&2
+  exit 1
+fi
+
+# Share the same short-lived control lock as the cellular owner. qmi-proxy
+# permits clients but does not serialize a settings/start/stop recovery step.
+exec 9>/run/serv/qmi-control.lock
+
+for mode in signal serving stats; do
+  if ! flock -w 2 9; then
+    exit 0
+  fi
+  case "$mode" in
+    signal) argument=--nas-get-signal-info ;;
+    serving) argument=--nas-get-serving-system ;;
+    stats) argument=--wds-get-packet-statistics ;;
+  esac
+  output="/run/serv/qmi-${mode}.txt"
+  temporary="$(mktemp "/run/serv/.qmi-${mode}.XXXXXX")"
+  if timeout --kill-after=2 8 /usr/bin/qmicli -p -d /dev/cdc-wdm0 "$argument" \
+      > "$temporary" 2>/dev/null; then
+    chmod 640 "$temporary"
+    mv -f "$temporary" "$output"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "/run/serv/qmi-${mode}.updated-at"
+  else
+    rm -f "$temporary"
+    # Do not let a successful sample from yesterday masquerade as live RF.
+    rm -f "$output" "/run/serv/qmi-${mode}.updated-at"
+  fi
+  flock -u 9
+done

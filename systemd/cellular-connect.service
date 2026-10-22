@@ -1,0 +1,28 @@
+[Unit]
+Description=Sixfab/Telit LTE cellular auto-connect watchdog
+After=usb.target
+Wants=usb.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cellular-connect.sh
+Restart=always
+RestartSec=10
+TimeoutStopSec=100
+# Preserve the owned WDS client/handle across a supervisor restart. Reboot
+# clears runtime state and modem enumeration identity is rechecked on startup.
+RuntimeDirectory=serv-cellular
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+Environment=DNS_MODE=preserve
+EnvironmentFile=-/etc/serv/cellular.env
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+# Needs root: raw_ip sysfs write, ip link/addr/route, qmicli device access
+User=root
+
+[Install]
+WantedBy=multi-user.target

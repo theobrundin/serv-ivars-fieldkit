@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep PR monitor private to this Pi
+Before=serv-reolink-stream.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /opt/serv-reolink/tools/reolink_bench/monitor-guard.nft
+# Deliberately retain the rule on stop; removing it while PR runs would expose
+# credentials/results. Rollback stops PR before deleting this owned table.
+
+[Install]
+WantedBy=multi-user.target

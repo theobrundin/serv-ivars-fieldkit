@@ -1,0 +1,134 @@
+# Plate Recognizer Stream configuration.
+#
+# Copy to the Stream working directory as `config.ini`. Stream regenerates a
+# default on first run; replace it with this and restart the container.
+#
+# DESIGN NOTE:
+#   Stream owns frame-by-frame recognition and a short temporal selection
+#   window. Physical-vehicle ownership, confidence/geometry gates, revisit
+#   cooldowns, hashing and delivery stay in plate_reader, where the on-device
+#   hashing boundary and one-car/one-outcome invariant are enforced.
+
+# Louisville is Eastern. Set per site.
+timezone = America/New_York
+config_change_restart = no
+
+[cameras]
+  # Use the broad US model. A 30 Aug field miss was reproduced through
+  # Snapshot: the former KY/IN/OH/TN list changed a correct 7858JH read into
+  # 785BJH, while regions=us returned the human-verified plate. State priors
+  # therefore must not constrain identity at this mixed-state drive-thru.
+  regions = us
+  # Empty on purpose. A path here writes a JPEG on EVERY detection (~5/s
+  # while a car dwells). plate_reader already keeps one highest-OCR still
+  # per vehicle from the webhook image; Stream must not also dump them.
+  image_format =
+  csv_file = $(camera)_%y-%m-%d.csv
+
+  [[camera-1]]
+    active = yes
+    url = rtsp://127.0.0.1:8554/cam
+
+    # The checked-in mediamtx.yml and the 28 Aug LJS live audit both use a
+    # 5fps source, so sample=1 supplies about 5 effective fps here. Repository
+    # configuration is not proof of the running unit: the application updater
+    # installs neither this file nor MediaMTX's /etc config. Verify
+    # received_fps in Stream's /status/ response after every site change.
+    # Five eFPS is within the vendor recommendation for traffic below 30 mph;
+    # keep sample=1 so a 5fps source is not reduced to 2.5 eFPS. Do not raise
+    # source FPS without an A/B that also checks Stream health and Pi thermal
+    # headroom; the Pi 5 software-encodes H264. See mediamtx.yml.
+    sample = 1
+
+    # max_prediction_delay is Stream's best-prediction selection window.
+    # Twelve seconds is about 60 analyzed frames with the checked-in and live
+    # 5fps MediaMTX config. The 31 Aug miss was selected seven seconds before
+    # the board, so six seconds still chose a pre-plate view.
+    # Stream emits selected vehicle events, not one webhook per analyzed frame.
+    # Voice-AI board timing remains a separate route timestamp; do not shorten
+    # OCR selection merely to make that future trigger appear faster.
+    max_prediction_delay = 12
+
+    # memory_decay is NOT a temporal-selection window. It is how long Stream
+    # suppresses detecting the same vehicle again. The audited queue kept one
+    # car visible for more than 70 seconds; 90 seconds prevents a long order
+    # from becoming a fresh provider result while remaining well below the
+    # 300s canary that suppressed all later rear evidence.
+    # App-side encounter reconciliation remains the physical dedup authority.
+    memory_decay = 90
+
+    # This site needs one rear government plate per physical vehicle. Stream
+    # represents additional plates as additional result entries, which can
+    # turn a dealer placard or sticker into another candidate vehicle in the
+    # downstream one-result/one-profile model. Keep the vendor default of one.
+    plates_per_vehicle = 1
+
+    # Detect the VEHICLE first, then look for its plate. Without this a car
+    # whose plate is unreadable is invisible — which is the entire reason
+    # LJS needed an inferred vehicle-count proxy in the first place. With it,
+    # the recogniser states outright that a car was present, and
+    # stream_engine.parse_vehicle_only turns that into an anonymous /visit.
+    #
+    # Those plateless detections arrive as sparse, irregular prediction events
+    # and have no plate to dedup on, so they are coalesced per encounter in
+    # stream_engine.py. Do not attempt to control them with memory_decay.
+    detection_mode = vehicle
+
+    # MMC: requires the Make/Model/Color subscription (this licence has it).
+    # Adds `model_make` and `color` to the payload, which now flow through
+    # RawPlateRead -> ConfirmedIdentification -> /visit's make/model/color.
+    # Descriptive only — never hash input, so a misclassified colour cannot
+    # split a customer. Costs some CPU; turn off if headroom gets tight.
+    mmc = yes
+
+    # One recognition webhook is a selected prediction, not a continuous
+    # vehicle track. Ask Stream for its completed native vehicle trajectory so
+    # plate_reader can prove lower-right entry -> upper-left/menu-board travel
+    # before a profile becomes restaurant traffic. This also keeps the first
+    # front/side observation open for a rear plate that appears seconds later.
+    dwell_time = true
+    trajectory = true
+    # Keep the 15s default. Lower values release a completed track faster but
+    # are more likely to split a briefly occluded queue vehicle. Recognized
+    # context can qualify from live entry->board observations; only the final
+    # anonymous KPI outcome waits for this completed track.
+    # Vendor guidance keeps dwell completion at least twice the prediction
+    # window so a temporary obstruction cannot close the physical route first.
+    max_dwell_delay = 30
+
+    # Stream already sees lane vehicles while they move into position. Do not
+    # re-report a stopped queue occupant after memory_decay: the 31 Aug audit
+    # proved that report_static=yes produced a fresh ~30-second provider track
+    # for the same physical car, including seven rows for the same two cars.
+    # Later movement toward the menu board remains eligible, while completed
+    # dwell trajectories preserve the physical route across that movement.
+    report_static = no
+
+    # Detection zones are not declared in this local config. Stream v1.64 may
+    # download a per-camera exclusion mask from the web at container startup;
+    # the startup message alone does not prove that a correctly sized mask is
+    # active. Verify the actual camera-1 mask after restart. White pixels are
+    # analyzed and black pixels ignored; preserve the full approach and plate
+    # path while excluding only confirmed background/upper-right traffic.
+
+    webhook_targets = serv-local
+
+[webhooks]
+  [[serv-local]]
+    # LOOPBACK ONLY, and this is load-bearing, not a preference:
+    # this payload contains RAW PLATE TEXT. It is hashed on-device by
+    # plate_reader before anything is sent to AWS. Pointing this at a remote
+    # URL would put unhashed plates on the network, breaking both
+    # SECURITY.md and the on-device-hashing patent claim.
+    url = http://127.0.0.1:8129/
+
+    # Explicit original frame, not Stream's vehicle/plate crop. The user needs
+    # the complete view for lighting, aim and background analysis. It remains
+    # loopback/local and plate_reader persists only one best still per episode.
+    image = original
+
+    request_timeout = 30
+
+    # Keep caching on: a momentary stall in the local listener (service
+    # restart, etc.) must not silently drop detections.
+    caching = yes

@@ -1,0 +1,45 @@
+{
+  "//": "Vehicle-record layer config. Plate thresholds/voting live in the",
+  "//_2": "production config.json and are NOT duplicated here — this layer",
+  "//_3": "changes nothing about how a plate is read, normalized or hashed.",
+
+  "vehicle_records": {
+    "//trigger": "When the record is finalized, transmitted and FROZEN.",
+    "//trigger_2": "  instant     first frame the vehicle is detected",
+    "//trigger_3": "  zone_entry  vehicle enters the dwell zone",
+    "//trigger_4": "  zone_exit   vehicle leaves the dwell zone  (DEFAULT)",
+    "//trigger_5": "  frame_exit  vehicle leaves frame entirely",
+    "//trigger_6": "zone_exit is the default because a plate needs several",
+    "//trigger_7": "agreeing frames to confirm. An earlier trigger commits the",
+    "//trigger_8": "record before the plate can resolve and sends the car as",
+    "//trigger_9": "plateless when it was about to be identified — a",
+    "//trigger_10": "self-inflicted miss that looks like a model failure.",
+    "send_trigger": "zone_exit",
+
+    "//track": "Vehicle-box association and track closing.",
+    "track_timeout_seconds": 3.0,
+    "min_track_frames": 3,
+    "iou_match_threshold": 0.3,
+
+    "//conf": "App-side floor on the SDK's car-detection confidence. 0.0 =",
+    "//conf_2": "trust the engine, which already gates at",
+    "//conf_3": "car_noplate_detect_min_score (0.8 default).",
+    "min_vehicle_confidence": 0.0,
+
+    "//fields": "Which descriptive classifiers are EXPECTED to contribute.",
+    "//fields_2": "Declared rather than inferred, so a null field can be read",
+    "//fields_3": "as 'not enabled' instead of 'enabled but never produced a",
+    "//fields_4": "reading' — different facts with different fixes.",
+    "//fields_5": "make_model_enabled requires VMMR in the production config;",
+    "//fields_6": "measured at ~268ms/frame with LPCI+VBSR, which does NOT fit",
+    "//fields_7": "the 200ms budget at 5fps. Off until that is re-measured.",
+    "color_enabled": true,
+    "make_model_enabled": false,
+
+    "//plateless": "Emit records for vehicles that never confirmed a plate.",
+    "//plateless_2": "Required for the identification-rate KPI: a unit that",
+    "//plateless_3": "only reports what it identified cannot report what it",
+    "//plateless_4": "missed.",
+    "emit_plateless": true
+  }
+}

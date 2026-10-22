@@ -1,0 +1,34 @@
+[Unit]
+Description=Serv Reolink home bench application (backend delivery disabled)
+After=network-online.target
+Wants=network-online.target
+ConditionHost=servTest
+ConditionPathExists=/home/serv/plate_reader/config.json
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+User=serv
+Group=serv
+WorkingDirectory=/opt/serv-reolink
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/serv-reolink
+ExecStart=/usr/bin/python3 -m plate_reader.main
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/serv/plate_reader /var/log/serv
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check home Reolink stream health every ten seconds
+ConditionHost=servTest
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=10
+AccuracySec=1
+Unit=serv-reolink-watchdog.service
+
+[Install]
+WantedBy=timers.target

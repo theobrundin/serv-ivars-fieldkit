@@ -1,0 +1,38 @@
+[Unit]
+Description=Serv isolated read-only modem telemetry collector
+After=network.target
+ConditionPathExists=/dev/cdc-wdm0
+
+[Service]
+Type=oneshot
+User=root
+Group=serv
+ExecStart=/usr/local/sbin/serv-qmi-collect
+# Three reads can each wait 2s for the shared lock, run 8s and take 2s
+# to terminate. Leave headroom for cleanup/status writes after the last read.
+TimeoutStartSec=45
+RuntimeDirectory=serv
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+DeviceAllow=/dev/cdc-wdm0 rw
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=/run/serv

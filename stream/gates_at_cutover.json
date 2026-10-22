@@ -1,0 +1,46 @@
+{
+  "//": "Confidence gates for the Plate Recognizer Stream engine at LJS.",
+  "//_WARNING": "These are on PR's score scale. They MUST be applied in the",
+  "//_WARNING2": "SAME change that sets alpr.engine to 'pr_stream'. Applying",
+  "//_WARNING3": "them while ultimatealpr is still running gates its scores",
+  "//_WARNING4": "against the wrong distribution and breaks recognition.",
+  "//_source": "docs/STREAM_THRESHOLD_TUNING.md - LJS 221-frame field eval,",
+  "//_source2": "cross-checked against 153 reads on dtfootagefinal.",
+
+  "alpr": {
+    "engine": "pr_stream",
+    "thresholds": {
+      "//_app_detect_min": "0.50 was a no-op on PR: dscore p25 is 0.880 and",
+      "//_app_detect_min2": "only 2/153 reads fell below 0.75.",
+      "app_detect_min": 0.75,
+      "//_app_ocr_min": "PR's scale sits far higher than ultimateALPR's",
+      "//_app_ocr_min2": "(median 0.99). 0.70 admits near-certain garbage.",
+      "app_ocr_min": 0.85
+    }
+  },
+
+  "thresholds": {
+    "//_group": "Group floors match the per-frame gates. Raising the OCR",
+    "//_group2": "floor to 0.95 killed a no-plate confirm on test footage but",
+    "//_group3": "cost real LJS plates in the 0.87-0.94 band (94% -> 76%",
+    "//_group4": "confirm rate). If no-plate confirms appear at LJS, try 0.90",
+    "//_group5": "here FIRST - do not touch high_ocr_single_frame.",
+    "min_group_detection_confidence": 0.75,
+    "min_group_ocr_confidence": 0.85,
+
+    "//_fast": "One frame at/above this confirms without waiting for a",
+    "//_fast2": "second agreeing read. Cannot be disabled: cars producing a",
+    "//_fast3": "single read exist, and voting alone drops recall to 17/21.",
+    "high_ocr_single_frame": 0.95,
+
+    "//_vote": "Unchanged. NOTE presence.vote_min_frames OVERRIDES this key",
+    "//_vote2": "when present (config.py ~1224) - keep both in step.",
+    "vote_min_frames": 2,
+    "vote_window_seconds": 3.0
+  },
+
+  "//_not_a_threshold_problem": "LJS's observed failure mode is choppy",
+  "//_not_a_threshold_problem2": "duplicates and background vehicles. No gate",
+  "//_not_a_threshold_problem3": "fixes either; dwell_zone does, and it is",
+  "//_not_a_threshold_problem4": "currently disabled at that site."
+}

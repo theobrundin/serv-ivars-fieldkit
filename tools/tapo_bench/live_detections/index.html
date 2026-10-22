@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111b1c">
+  <title>Serv · Live detections</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <header><a class="brand" href="/" aria-label="Serv home">serv<span> / field test</span></a><span class="session-tag">HOUSE TEST</span></header>
+  <main>
+    <div class="heading"><div><p class="eyebrow">TAPO C113 · LIVE RECOGNITION</p><h1>Every reading.<br><span>As it happens.</span></h1></div><div class="connection" id="connection"><span class="dot"></span><span id="connection-text">Connecting…</span></div></div>
+    <div class="notice" id="notice" role="status" aria-live="polite">Connecting to the Pi. Keep this page open while you test.</div>
+    <section class="health" aria-label="Pipeline status">
+      <div><span class="caption">CAMERA → PI</span><strong id="camera-health">Checking</strong><small id="camera-detail">Local camera Wi-Fi</small></div>
+      <div><span class="caption">RECOGNIZER</span><strong id="recognizer-health">Checking</strong><small id="recognizer-detail">Plate Recognizer Stream</small></div>
+      <div><span class="caption">LAST SYNC</span><strong id="last-sync">—</strong><small id="transport">Waiting for the Pi</small></div>
+    </section>
+    <div class="feed-heading"><div><h2>Detection feed <span id="reading-count">0</span></h2><p id="session-time">This session only</p></div><label class="pause"><input type="checkbox" id="pause"><span>Pause display</span></label></div>
+    <div class="feed-note">Plate guesses appear as <b>Unconfirmed</b>. A <b>Confirmed</b> badge requires a matching result from Serv. Repeated readings can belong to the same car.</div>
+    <section id="empty" class="empty"><div class="empty-icon" aria-hidden="true"><span></span><span></span><span></span><span></span><b>ABC 123</b></div><h3 id="empty-title">Waiting for the first car</h3><p id="empty-detail">Once the connection is ready, drive through the camera’s view. New results usually take about 12 seconds to appear.</p></section>
+    <section id="feed" aria-label="Vehicle readings" aria-live="polite" aria-relevant="additions"></section>
+    <footer><span class="privacy-mark" aria-hidden="true">◇</span><p>Temporary test viewer · No video is sent to this page.<br>Readings remain in memory for 30 minutes. Cloud delivery is disabled for this bench.</p></footer>
+  </main>
+</div>
+</body>
+</html>

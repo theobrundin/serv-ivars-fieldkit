@@ -1,0 +1,21 @@
+[Unit]
+Description=Reconcile local capture with configured operating hours
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/serv-capture-hours
+Environment=SERV_CAPTURE_RUN_STREAM=/opt/serv/stream/run_stream.sh
+Environment=SKIP_PULL=1
+TimeoutStartSec=90
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run /home/serv/stream
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

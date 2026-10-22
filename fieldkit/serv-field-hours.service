@@ -1,0 +1,19 @@
+[Unit]
+Description=Reconcile Ivar's IP-camera recognition with open hours
+After=NetworkManager.service docker.service
+ConditionPathExists=/etc/serv-field/unit.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/serv-field reconcile
+TimeoutStartSec=60
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/serv-field
+RuntimeDirectory=serv-field
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

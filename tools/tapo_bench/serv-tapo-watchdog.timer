@@ -1,0 +1,12 @@
+[Unit]
+Description=Check home Tapo stream health every ten seconds
+ConditionHost=servTest
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=10
+AccuracySec=1
+Unit=serv-tapo-watchdog.service
+
+[Install]
+WantedBy=timers.target
