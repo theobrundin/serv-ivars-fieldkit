@@ -44,6 +44,7 @@ from .engines import RawPlateRead
 from .audit_evidence import AuditFrameCache
 from .log import get
 from .normalizer import normalize
+from . import ivars_route
 
 
 @dataclass(frozen=True)
@@ -947,6 +948,15 @@ class StreamWebhookEngine:
             stream_cfg, "identified_hold_seconds", 300.0))
         presence = getattr(cfg, "presence", None)
         route = getattr(presence, "route_qualification", None)
+        self._route_policy = getattr(route, "policy", "entry_board")
+        diagnostics = getattr(cfg, "diagnostics", None)
+        audit_dir = getattr(diagnostics, "miss_plate_dir", None)
+        self._route_audit_dir = (
+            str(audit_dir) + "/route-tracks"
+            if self._route_policy == ivars_route.POLICY and audit_dir
+            and getattr(diagnostics, "save_unidentified_vehicle_frames", False)
+            else None
+        )
         self._route_enabled = bool(getattr(route, "enabled", False))
         self._route_shadow_only = bool(getattr(route, "shadow_only", True))
         self._profile_reconciliation_enabled = bool(getattr(
@@ -1014,6 +1024,16 @@ class StreamWebhookEngine:
         self._frame_height = int(getattr(
             capture, "height", getattr(camera, "resolution_height", 1088)
         ))
+        if self._route_policy not in ("entry_board", ivars_route.POLICY):
+            raise ValueError("Unknown physical route policy")
+        if self._route_policy == ivars_route.POLICY and (
+            getattr(cfg, "location_id", None) != "ivars-001"
+            or getattr(cfg, "device_id", None) != "serv-ivars-001"
+            or (self._frame_width, self._frame_height) != ivars_route.FRAME_SIZE
+            or self._route_entry_zone != ivars_route.ENTRY_ZONE
+            or self._route_board_zone != ivars_route.WINDOW_ZONE
+        ):
+            raise ValueError("Ivar's window policy requires its calibrated site, frame and zones")
         # This is a reviewed LJS-only exception, not a new fleet default or
         # a relaxation of the ordinary route/identity floors. A changed site,
         # zone, or shorter grace period must be reviewed separately.
@@ -1888,6 +1908,10 @@ class StreamWebhookEngine:
     def _box_center_normalized(
         self, box: tuple[int, int, int, int] | None
     ) -> tuple[float, float] | None:
+        # All route observations/reconciliation/tombstones use the same anchor.
+        # Preserve legacy centroid semantics unless this site opts in explicitly.
+        if self._route_policy == ivars_route.POLICY:
+            return ivars_route.bottom_center(box, self._frame_width, self._frame_height)
         if not box or self._frame_width <= 0 or self._frame_height <= 0:
             return None
         x1, y1, x2, y2 = box
@@ -2058,6 +2082,8 @@ class StreamWebhookEngine:
         self, track: StreamDwellTrack
     ) -> tuple[str, str, int | None]:
         """Classify a completed physical track and return first board index."""
+        if self._route_policy == ivars_route.POLICY:
+            return self._ivars_trajectory_route_evidence(track)
         rows = []
         for index, sample in enumerate(track.samples):
             point = self._box_center_normalized(sample.vehicle_bbox)
@@ -2171,6 +2197,61 @@ class StreamWebhookEngine:
                 return "rejected", "insufficient_leftward_progress", None
             return "rejected", "insufficient_upward_progress", None
         return "qualified", "entry_then_board_trajectory", board_start
+
+    def _ivars_trajectory_route_evidence(self, track):
+        rows, invalid = self._ivars_route_rows(track)
+        if invalid:
+            return "rejected", invalid, None
+        return ivars_route.classify(rows)
+
+    def _ivars_route_rows(self, track):
+        rows = []
+        for index, sample in enumerate(track.samples):
+            point = self._box_center_normalized(sample.vehicle_bbox)
+            if point is None:
+                return [], "trajectory_invalid_geometry_or_timing"
+            rows.append((index, point))
+        # Do not use duplicate instants as independent zone observations, or
+        # cherry-pick a second vehicle's box to make the route qualify.
+        resolved = []
+        cursor = 0
+        while cursor < len(rows):
+            index = rows[cursor][0]
+            epoch = (_iso_epoch(track.sample_observed_at[index])
+                     if index < len(track.sample_observed_at) else None)
+            if epoch is None:
+                return [], "trajectory_missing_timing"
+            group = {}
+            end = cursor
+            while end < len(rows):
+                other = rows[end][0]
+                when = (_iso_epoch(track.sample_observed_at[other])
+                        if other < len(track.sample_observed_at) else None)
+                if when != epoch:
+                    break
+                group.setdefault(tuple(track.samples[other].vehicle_bbox), other)
+                end += 1
+            if len(group) == 1:
+                chosen = next(iter(group.values()))
+            else:
+                chosen = ivars_route.unique_continuation(
+                    track.samples[resolved[-1][0]].vehicle_bbox,
+                    [(i, b) for b, i in group.items()],
+                ) if resolved else None
+                if chosen is None:
+                    return [], "trajectory_ambiguous_samples"
+            resolved.append((chosen, None))
+            cursor = end
+        normalized = []
+        for index, _ in resolved:
+            epoch = (_iso_epoch(track.sample_observed_at[index])
+                     if index < len(track.sample_observed_at) else None)
+            box = track.samples[index].vehicle_bbox
+            normalized.append((index, epoch, tuple(
+                value / (self._frame_width if axis % 2 == 0 else self._frame_height)
+                for axis, value in enumerate(box)
+            )))
+        return normalized, ivars_route.invalid_rows(normalized)
 
     def _progressive_board_rescue_start(
         self,
@@ -3268,6 +3349,19 @@ class StreamWebhookEngine:
         cache_unmatched: bool,
         log_unmatched: bool = True,
     ) -> bool:
+        original_track = track
+        if self._route_policy == ivars_route.POLICY:
+            rows, invalid = self._ivars_route_rows(track)
+            if invalid:
+                self._retain_route_audit(track, "rejected", invalid, "invalid_native_evidence")
+                log.info("VEHICLE_ROUTE track ignored reason=%s", invalid)
+                return False
+            # Use exactly the same unique geometry for ownership and counting.
+            # A coincident background box removed from route proof must never
+            # remain eligible to merge a background profile into this customer.
+            track = replace(track,
+                samples=tuple(track.samples[i] for i, _, _ in rows),
+                sample_observed_at=tuple(track.sample_observed_at[i] for i, _, _ in rows))
         status, reason = self._classify_trajectory(track)
         matches = self._match_dwell_locked(
             track,
@@ -3277,6 +3371,8 @@ class StreamWebhookEngine:
                 and self._profile_reconciliation_enabled
             ),
         )
+        self._retain_route_audit(original_track, status, reason,
+                                 "matched" if matches else "no_unique_candidate")
         fingerprint = _dwell_fingerprint(track)
         if not matches:
             # Only a physically qualified path is worth retrying. Rejected
@@ -3377,6 +3473,18 @@ class StreamWebhookEngine:
             "multi-profile" if len(matches) > 1 else "single-profile",
         )
         return True
+
+    def _retain_route_audit(self, track, status, reason, association):
+        if not self._route_audit_dir:
+            return
+        try:
+            from .route_audit import retain_track
+            retain_track(self._route_audit_dir, track, status=status,
+                         reason=reason, association=association)
+        except (OSError, ValueError, TypeError):
+            # Diagnostics must not interrupt counting or expose the original
+            # payload/plate candidate in an exception message.
+            log.warning("Native route audit unavailable; pipeline continues")
 
     def _retry_pending_dwell_locked(self, now: float) -> None:
         for fingerprint, (track, expires_at) in list(

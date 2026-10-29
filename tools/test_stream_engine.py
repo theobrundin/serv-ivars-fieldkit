@@ -2504,6 +2504,9 @@ except ValueError:
 from test_vehicle_route_lifecycle import run_checks as _run_route_checks  # noqa: E402
 _run_route_checks(check)
 
+from test_ivars_route import run_checks as _run_ivars_checks  # noqa: E402
+_run_ivars_checks(check)
+
 # Provider-time voting, exact retry suppression, and multi-result ownership
 # are part of the same required seam. Keep their focused fixtures separate,
 # but always run them here so the documented deployment suite covers them.

@@ -170,6 +170,33 @@ case. Time-only grouping remains only for legacy reads with no encounter ID.
 DetectionEvents remain diagnostic evidence linked by `encounter_id`; they are
 never extra cars.
 
+Ivar's has an opt-in `ivars_window_v1` route policy, prepared for manual site
+review; it is **not enabled by default or validated for production**. Existing
+configs retain `entry_board` behaviour. The new policy is locked to
+`serv-ivars-001` / `ivars-001`, 2304x1296, and its versioned zones. It uses
+**bottom-centres** of vehicle boxes: ordered approach then at least two seconds
+of near-window occupancy, with eight unique timestamped samples, size and
+direction guards. Missing timing, ambiguous coincident boxes, gaps over three
+seconds, and disjoint consecutive geometry fail closed. Coincident samples
+require a unique continuation with union IoU >=0.50 and a >=0.30 margin over
+the next candidate; zone membership and appearance never choose the winner.
+Only the resolved trajectory participates in profile reconciliation, so a
+discarded background box cannot merge identities. A departure-only fragment
+cannot independently qualify. Plate confidence, hashing, and legacy LJS
+qualification are unchanged. The 28 October geometry replay has engineering
+expectations, **not human-labelled accuracy results**. See
+`docs/IVARS_ROUTE_CALIBRATION.md` for review and rollout constraints.
+
+With this opt-in policy and unidentified-frame diagnostics enabled, native
+trajectories are also retained under `miss_plate_dir/route-tracks`, including
+unmatched/ambiguous tracks that cannot be attached to a recognition photo.
+This log contains only allowlisted timestamps, boxes and route/association
+decisions; no plate candidates, identity hashes, appearance or image bytes.
+It is bounded to 200 records, 24 hours, 2048 samples/record and 512 KiB/record;
+truncation is explicit and never supplies qualification. Files are private
+and written atomically; diagnostic storage failure does not stop counting.
+This is an on-device diagnostic store, not a new AWS stream or vehicle count.
+
 At LJS, a plate or vehicle detection is only a **candidate vehicle profile**.
 Anonymous traffic requires Stream's completed dwell trajectory to show the
 vehicle centre in the site-calibrated lower-right entry zone and later in the
@@ -825,6 +852,22 @@ internet isolation, Tailscale-only management, and actual day/night/lane
 acceptance remain required. `fieldkit/update_operator.py` is a separately
 human-approved incremental update for the installed commissioning sandbox;
 it preserves the running camera, app configuration and recognition core.
+
+`fieldkit/update_routes.py` is a separate, one-time Ivar's route updater for
+the verified `c15ae99` application baseline. It targets `/opt/serv-reolink`
+and `serv-reolink-app.service`, not the fleet's paths. A human bootstraps the
+root-owned helper and approves an exact locally fetched channel-head SHA with
+an explicit active/shadow choice. Staging never approves or activates it, and
+no update timer is installed. Only four route modules may differ; other source,
+identity, confidence gates, cellular and capture services remain unchanged.
+The helper validates both profiles as the unprivileged application user,
+checks for source/configuration drift, and requires an empty lane before an
+application restart. It backs up code and both production profiles and restores
+them on a caught startup failure; an interrupted update has a manual rollback
+command. Rollback does not rewind queues or historical AWS counts. The listener
+startup probe is liveness only: camera, route decisions, and AWS delivery still
+need post-deployment checks. This mechanism does not make the known V38 route
+miss acceptable or establish field accuracy.
 
 The IP-camera hours timer controls `serv-tapo-stream.service` directly; it must
 not invoke the IMX296/MediaMTX capture helper. A boot-local condition marker is

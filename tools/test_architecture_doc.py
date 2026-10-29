@@ -67,6 +67,16 @@ check("NullCamera is what own-capture engines use",
       "NullCamera" in DOC, True)
 
 print("\n=== shipping config: doc vs config.example.json ===")
+from plate_reader.config import RouteQualification  # noqa: E402
+from plate_reader import ivars_route  # noqa: E402
+check("existing sites keep legacy route policy", RouteQualification().policy, "entry_board")
+check("Ivar's route candidate stays explicit and unvalidated",
+      mentions("ivars_window_v1", "not enabled by default or validated for production",
+               "bottom-centres", "Only the resolved trajectory", "not human-labelled accuracy results"), True)
+check("Ivar's versioned frame matches doc", ivars_route.FRAME_SIZE, (2304,1296))
+check("Ivar's candidate zones stay pinned",
+      (ivars_route.ENTRY_ZONE, ivars_route.WINDOW_ZONE),
+      ((0.40,0.55,0.95,0.74),(0.05,0.65,0.39,1.0)))
 th = EXAMPLE["alpr"]["thresholds"]
 check("example still ships the engine the doc describes",
       EXAMPLE["alpr"]["engine"], "pr_stream")

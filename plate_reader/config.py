@@ -253,6 +253,8 @@ class RouteQualification:
     rear plate farther up the drive-through lane.
     """
     enabled: bool = False
+    # Legacy entry/board geometry remains the default for every existing site.
+    policy: str = "entry_board"
     # Keep the classifier observable without changing traffic totals during a
     # new site's calibration. A reviewed live config can opt into authority
     # only after the site's actual dwell payloads validate the geometry.
@@ -1506,7 +1508,7 @@ def load(path: Path = CONFIG_PATH) -> Config:
             raise ConfigError("presence.route_qualification must be an object")
         _reject_unknown(
             route_raw,
-            {"enabled", "shadow_only", "profile_reconciliation_enabled",
+            {"enabled", "policy", "shadow_only", "profile_reconciliation_enabled",
              "entry_zone", "min_trajectory_points",
              "min_trajectory_duration_seconds", "zone_confirm_points",
              "min_leftward_progress", "min_upward_progress",
@@ -1522,6 +1524,7 @@ def load(path: Path = CONFIG_PATH) -> Config:
             "presence.route_qualification",
         )
         route_qualification = RouteQualification(
+            policy=route_raw.get("policy", "entry_board"),
             enabled=_flag(
                 route_raw, "enabled", False,
                 label="presence.route_qualification.enabled",
@@ -1591,6 +1594,14 @@ def load(path: Path = CONFIG_PATH) -> Config:
                 route_raw, "terminal_tombstone_seconds", 300.0
             ),
         )
+        if route_qualification.policy not in ("entry_board", "ivars_window_v1"):
+            raise ConfigError("presence.route_qualification.policy is unknown")
+        if route_qualification.policy == "ivars_window_v1":
+            from .ivars_route import ENTRY_ZONE, WINDOW_ZONE
+            if (location_id != "ivars-001" or device_id != "serv-ivars-001"
+                    or route_qualification.entry_zone != ENTRY_ZONE
+                    or board_zone != WINDOW_ZONE):
+                raise ConfigError("ivars_window_v1 requires Ivar's 001 identity and calibrated zones")
         if route_qualification.enabled and route_qualification.entry_zone is None:
             raise ConfigError(
                 "presence.route_qualification.entry_zone is required when "
@@ -2121,6 +2132,10 @@ def load(path: Path = CONFIG_PATH) -> Config:
             raise ConfigError("capture.target_fps must be > 0")
         if capture.width <= 0 or capture.height <= 0:
             raise ConfigError("capture.width/height must be > 0")
+        if route_qualification.policy == "ivars_window_v1" and (
+            capture.width, capture.height
+        ) != (2304, 1296):
+            raise ConfigError("ivars_window_v1 requires the calibrated 2304x1296 frame")
 
         dg_raw = raw.get("diagnostics", {}) or {}
         if not isinstance(dg_raw, dict):
