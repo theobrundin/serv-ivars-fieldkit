@@ -1,8 +1,11 @@
 # Ivar's 001 route calibration candidate — 28 October 2026
 
-Status: implemented locally, not deployed. The subsequent independent replay
-failed production acceptance on a real approach/window track; see the fresh
-validation below. The first 120 cases informed calibration.
+Status: **active on Ivar's 001 as of 28 October 2026, 19:21:55 PDT**, release
+`dc72c9dd0ffaf076802e9fa757389a9c619442aa`. The user instructed activation after
+the known missed-arrival result and approval requirement were explained. The
+earlier production acceptance failure remains unresolved; activation is not a
+claim of validated counting accuracy. The first 120 cases informed calibration.
+The validation sections below describe evidence collected before deployment.
 
 The live Pi was checked at 20:57 UTC. Capture, PR, application, cellular and
 Tailscale were healthy; pending and dead-letter queues were empty. Route

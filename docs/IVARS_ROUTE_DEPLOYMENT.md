@@ -1,5 +1,29 @@
 # Ivar's 001 route release — manual approval and rollback
 
+## Deployment record: applied
+
+Application release `dc72c9dd0ffaf076802e9fa757389a9c619442aa` was applied in
+**active** mode at 2026-10-29T02:21:55Z (28 October, 19:21:55 PDT); startup
+completed at 02:21:59Z. The user directly instructed the agent to execute after
+the human-run approval requirement had been explained. That one-time override
+was recorded privately on the Pi; the default repository rule was not changed.
+The agent executed the exact-release approval under that later instruction.
+Do not mistake this for a human manually executing the approval command.
+
+All 24 installed application modules matched the release; active and saved
+production profiles matched with `ivars_window_v1` and `shadow_only=false`.
+The listener remained on 127.0.0.1:8129. Camera/PR stayed healthy at 15 fps;
+cellular, Tailscale and services remained up, and queue/dead letters were 0/0.
+No startup Traceback, CRITICAL or ERROR messages were observed. AWS Devices
+recorded a fresh heartbeat at 2026-10-29T02:22:00.554Z, after the restart.
+These are operational checks, not proof of route precision/recall or night
+accuracy. The known V38 missed-arrival limitation remains.
+
+Backup: `/var/lib/serv-ivars-updates/backup-20261029T022155Z`.
+Approval was consumed. The Desktop approval launcher now only displays status.
+The bootstrap/approval instructions below are the original procedure, not a
+request to reinstall or reapprove this already-applied release.
+
 This release is a calibration candidate with a known missed arrival (V38).
 Active mode excludes unqualified traffic, including that known miss; shadow
 mode evaluates routes without enforcing them on counts. The user chooses the
